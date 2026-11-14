@@ -1,5 +1,5 @@
 from pathlib import Path
-import urllib.request,hashlib,subprocess,os,json
+import urllib.request,hashlib,subprocess,os,json,shutil
 root=Path(__file__).resolve().parents[1];tools=root/'.tools';tools.mkdir(exist_ok=True)
 setup=tools/'innosetup-7.1.1-x64.exe';compiler=tools/'InnoSetup/ISCC.exe'
 url='https://github.com/jrsoftware/issrc/releases/download/is-7_1_1/innosetup-7.1.1-x64.exe'
@@ -9,8 +9,11 @@ if not setup.exists():
 assert hashlib.sha256(setup.read_bytes()).hexdigest()==expected,'Compiler download hash mismatch'
 env=os.environ.copy();env['DESK_COMPILER_EXE']=str(setup)
 verify="$sig = Get-AuthenticodeSignature -LiteralPath $env:DESK_COMPILER_EXE; if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notlike '*Pyrsys*') { exit 1 }; Write-Output 'Compiler Authenticode verified'"
-powershell=Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe'
-subprocess.run([str(powershell),'-NoProfile','-NonInteractive','-Command',verify],env=env,check=True)
+powershell=shutil.which('pwsh.exe') or str(Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
+# Do not mix PowerShell 7's module path with the legacy Windows host. This
+# otherwise prevents Microsoft.PowerShell.Security from loading in CI.
+verify_env=env.copy();verify_env.pop('PSModulePath',None)
+subprocess.run([str(powershell),'-NoProfile','-NonInteractive','-Command',verify],env=verify_env,check=True)
 if not compiler.exists():subprocess.run([str(setup),'/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/CURRENTUSER','/NOICONS','/DIR='+str(compiler.parent)],check=True)
 assert not (root/'dist/Desk/internet.json').exists(),'Refusing to publish connection credentials'
 subprocess.run([str(compiler),str(root/'packaging/Desk.iss')],cwd=root,check=True)
