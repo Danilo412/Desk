@@ -1,0 +1,12 @@
+{
+  "public_key": "pk_live_REPLACE_WITH_YOUR_PUBLIC_SIGNALING_KEY",
+  "provider": "ExpressTURN",
+  "config_revision": "user-configured-1",
+  "ice_servers": [
+    {
+      "urls": ["turn:free.expressturn.com:3478?transport=tcp"],
+      "username": "YOUR_TURN_USERNAME",
+      "credential": "YOUR_TURN_PASSWORD"
+    }
+  ]
+}

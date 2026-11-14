@@ -1,0 +1,177 @@
+Metadata-Version: 2.5
+Name: metered-realtime
+Version: 1.0.2
+Summary: Async Python SDK for the Metered Realtime Messaging service — WebSocket pub/sub + WebRTC (aiortc).
+Project-URL: Homepage, https://www.metered.ca/docs/realtime-messaging/sdk-python/
+Project-URL: Documentation, https://www.metered.ca/docs/realtime-messaging/sdk-python/getting-started
+Project-URL: Repository, https://github.com/metered-ca/realtime-python
+Project-URL: Issues, https://github.com/metered-ca/realtime-python/issues
+Author: Metered
+License: MIT
+License-File: LICENSE
+Keywords: aiortc,datachannel,metered,p2p,pubsub,realtime,sdk,signaling,signalling,turn,video,voice,webrtc,websocket
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Framework :: AsyncIO
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Topic :: Communications
+Classifier: Topic :: Multimedia :: Sound/Audio
+Classifier: Topic :: Multimedia :: Video
+Classifier: Typing :: Typed
+Requires-Python: >=3.10
+Requires-Dist: websockets<16,>=13
+Provides-Extra: auth
+Requires-Dist: pyjwt<3,>=2.8; extra == 'auth'
+Provides-Extra: dev
+Requires-Dist: aiortc<2,>=1.14; extra == 'dev'
+Requires-Dist: av>=12; extra == 'dev'
+Requires-Dist: mypy>=1.13; extra == 'dev'
+Requires-Dist: pyjwt<3,>=2.8; extra == 'dev'
+Requires-Dist: pytest-asyncio>=0.24; extra == 'dev'
+Requires-Dist: pytest-timeout>=2.3; extra == 'dev'
+Requires-Dist: pytest>=8; extra == 'dev'
+Requires-Dist: ruff>=0.7; extra == 'dev'
+Provides-Extra: interop
+Requires-Dist: aiortc<2,>=1.14; extra == 'interop'
+Requires-Dist: av>=12; extra == 'interop'
+Requires-Dist: mypy>=1.13; extra == 'interop'
+Requires-Dist: playwright>=1.49; extra == 'interop'
+Requires-Dist: pyjwt<3,>=2.8; extra == 'interop'
+Requires-Dist: pytest-asyncio>=0.24; extra == 'interop'
+Requires-Dist: pytest-timeout>=2.3; extra == 'interop'
+Requires-Dist: pytest>=8; extra == 'interop'
+Requires-Dist: ruff>=0.7; extra == 'interop'
+Provides-Extra: webrtc
+Requires-Dist: aiortc<2,>=1.14; extra == 'webrtc'
+Requires-Dist: av>=12; extra == 'webrtc'
+Description-Content-Type: text/markdown
+
+# metered-realtime
+
+Async Python SDK for the [Metered Realtime Messaging](https://www.metered.ca/docs/realtime-messaging)
+service. The Python counterpart to the JavaScript SDK — a Python peer can share a room with browser
+peers.
+
+Built for server-side and edge use cases the browser can't reach: AI voice agents that join a room
+to run STT→LLM→TTS, IoT camera/telemetry bridges, recording bots, and headless automation.
+
+> **Building with AI?** Point Claude Code, Cursor, or Copilot at the SDK reference file —
+> [`llms-realtime-messaging-python-sdk.txt`](https://www.metered.ca/docs/llms-realtime-messaging-python-sdk.txt) —
+> and describe what you want to build. More prompts: [Build with AI](https://www.metered.ca/docs/build-with-ai).
+
+## Install
+
+```bash
+pip install metered-realtime             # pub/sub only (SignallingClient)
+pip install "metered-realtime[webrtc]"   # + the WebRTC peer layer (MeteredPeer)
+```
+
+Requires Python 3.10+.
+
+## Quick start — rooms with WebRTC (`MeteredPeer`)
+
+```python
+import asyncio
+from metered_realtime import MeteredPeer, PeerJoined, Data, Track
+
+async def main() -> None:
+    async with MeteredPeer(api_key="pk_live_...") as peer:
+        @peer.on(PeerJoined)
+        def _(ev: PeerJoined) -> None:
+            print("peer joined:", ev.peer.id)
+
+            @ev.peer.on(Track)
+            def _(t: Track) -> None:
+                print("receiving", t.track.kind, "stream:", [s.id for s in t.streams])
+
+        @peer.on(Data)
+        def _(ev: Data) -> None:
+            print(ev.sender_peer_id, "says", ev.data)
+
+        await peer.join("room-42")
+        await peer.send({"hello": True})          # broadcast to the room
+        # Attach media to every peer (current + future). add_track takes a track;
+        # add_stream takes a MediaStream grouping. Any aiortc track works, e.g.:
+        #     from aiortc.contrib.media import MediaPlayer
+        #     peer.add_track(MediaPlayer("clip.mp3").audio)
+        await asyncio.sleep(30)
+
+asyncio.run(main())
+```
+
+## Quick start — pub/sub only (`SignallingClient`)
+
+```python
+import asyncio
+from metered_realtime import SignallingClient, Message
+
+async def main() -> None:
+    async with SignallingClient(api_key="pk_live_...") as client:
+        @client.on(Message)
+        def _(ev: Message) -> None:
+            print(ev.sender_peer_id, ev.data)
+
+        await client.subscribe("room-42")
+        await client.publish("room-42", {"hello": True})
+        await asyncio.sleep(5)
+
+asyncio.run(main())
+```
+
+### Media input
+
+Pass any aiortc-compatible track to `add_track`, or use the built-in helpers
+(`metered-realtime[webrtc]`):
+
+```python
+from metered_realtime import AudioSource, from_file, from_rtsp, iter_frames
+
+# Push synthesized audio (e.g. an AI agent's speech) into the room:
+source = AudioSource(input_rate=16_000)        # 16 kHz mono PCM in
+peer.add_track(source)
+await source.push(pcm_bytes)                    # emitted as real-time 48 kHz audio
+source.end()
+
+# Or feed from a file / IP camera (.audio / .video is None if the source lacks it):
+peer.add_track(from_file("clip.mp4").audio)
+peer.add_track(from_rtsp("rtsp://cam:554/stream").video)
+
+# Consume a peer's incoming media (e.g. for speech-to-text):
+async for frame in iter_frames(track):          # ends cleanly when the track stops
+    ...
+```
+
+`from_camera` / `from_microphone` / `screen_share` capture from local devices
+(platform-dependent). See the
+[documentation](https://www.metered.ca/docs/realtime-messaging/sdk-python/) for auth (publishable keys vs.
+token providers), presence, direct messages, media, and data channels.
+
+> **Provisional:** the media-input helpers (`AudioSource`, `iter_frames`, `from_file` / `from_rtsp` /
+> `from_camera` / `from_microphone` / `screen_share`) may change in a minor release. The core media
+> API on `MeteredPeer` — `add_stream` / `add_track` / `replace_track`, and `MediaStream` — is stable.
+
+## Documentation
+
+Full Python SDK docs: **[metered.ca/docs/realtime-messaging/sdk-python](https://www.metered.ca/docs/realtime-messaging/sdk-python/)**
+
+- **[Getting started](https://www.metered.ca/docs/realtime-messaging/sdk-python/getting-started)** — install, auth, your first peer
+- **[API reference](https://www.metered.ca/docs/realtime-messaging/sdk-python/api-reference/metered-peer)** — `MeteredPeer`, `RemotePeer`, `DataChannel`, media, every event/error/code
+- **[Guides](https://www.metered.ca/docs/realtime-messaging/sdk-python/guides/ai-agent-communication)** — authentication, reconnect best-practices, AI agent communication, IoT telemetry
+- **[Errors & codes](https://www.metered.ca/docs/realtime-messaging/sdk-python/api-reference/errors-and-codes)** — close codes, exception types, how to react
+
+## Examples
+
+Runnable end-to-end demos, each walked through in the [examples docs](https://www.metered.ca/docs/realtime-messaging/sdk-python/examples/data-channel) (each takes `METERED_KEY=pk_live_…`):
+
+- [`data_channel_echo.py`](https://www.metered.ca/docs/realtime-messaging/sdk-python/examples/data-channel) — open a peer-to-peer data channel and echo messages.
+- [`audio_agent.py`](https://www.metered.ca/docs/realtime-messaging/sdk-python/examples/audio-agent) — stream synthesized audio into a room and consume a peer's audio (the "agent in the call" shape).
+
+## License
+
+MIT — see [LICENSE](./LICENSE).

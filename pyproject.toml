@@ -1,0 +1,21 @@
+[project]
+name = "desk-remoto"
+version = "0.9.9"
+description = "Aplicativo próprio de suporte remoto consentido para Windows"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.12"
+dependencies = ["PySide6-Essentials==6.8.3", "Pillow==13.0.0", "mss==10.2.0", "cryptography==50.0.2", "av==16.1.0", "numpy==2.2.6", "soundcard==0.4.6", "metered-realtime[webrtc]==1.0.2", "aiortc==1.15.0", "websockets==15.0.1", "dxcam==0.3.0", "comtypes==1.4.17"]
+
+[project.scripts]
+desk = "novoacesso.app:main"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
