@@ -28,6 +28,7 @@ Windows 10/11 x64 e Python 3.12 x64:
 ```console
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements-build.txt
+.venv\Scripts\python -m pip install --no-deps -e .
 .venv\Scripts\python iniciar.py
 ```
 
