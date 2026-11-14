@@ -2,7 +2,7 @@
 
 ## Estado atual
 
-O Desk está preparando uma candidatura à SignPath Foundation. Não foi aprovado e não possui certificado fornecido por ela. Releases atuais são identificadas como **unsigned / sem assinatura**. Nenhum arquivo deve ser apresentado como assinado antes de uma assinatura válida ser verificada.
+A candidatura do Desk à SignPath Foundation foi enviada em **14 de novembro de 2026**. O formulário confirmou o recebimento; a análise está pendente. O projeto ainda não foi aprovado e não possui certificado fornecido por ela. Releases atuais são identificadas como **unsigned / sem assinatura**. Nenhum arquivo deve ser apresentado como assinado antes de uma assinatura válida ser verificada.
 
 ## Responsabilidades
 

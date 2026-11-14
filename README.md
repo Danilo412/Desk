@@ -53,7 +53,7 @@ O código 0.9.9 passou em 113 testes locais. Foram feitos testes sintéticos de 
 
 ## Code signing policy
 
-O projeto está solicitando participação no programa gratuito da SignPath Foundation. **Não há aprovação ou certificado concedido até o momento; os arquivos atuais continuam sem assinatura.** Veja [CODE_SIGNING.md](CODE_SIGNING.md). A autoria e a reputação do projeto são recentes; não alegamos adoção pública anterior.
+A solicitação de participação no programa gratuito da SignPath Foundation foi enviada em **14 de novembro de 2026** e aguarda análise. **Não há aprovação ou certificado concedido até o momento; os arquivos atuais continuam sem assinatura.** Veja [CODE_SIGNING.md](CODE_SIGNING.md). A autoria e a reputação do projeto são recentes; não alegamos adoção pública anterior.
 
 ## Privacidade e licença
 
