@@ -1,7 +1,7 @@
 DESK 0.12.0 — ATUALIZAÇÕES PELO PRÓPRIO PROGRAMA
 
 Instale esta versão uma vez nos computadores que ainda usam o Desk antigo.
-Ela busca novas versões ao abrir e a cada 6 horas enquanto estiver em execução.
+Ela busca novas versões ao abrir e a cada 5 minutos enquanto estiver em execução.
 O botão “Atualizar” avisa quando houver uma versão nova. Você também pode usar
 o menu “Verificar atualizações”. O download começa somente após seu clique;
 o instalador abre após uma segunda confirmação. Nenhuma sessão em andamento

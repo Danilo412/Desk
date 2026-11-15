@@ -65,4 +65,4 @@ Problemas gerais podem ser relatados em Issues. Não publique convites, credenci
 
 ## Atualizações
 
-O Desk instalado verifica atualizações ao abrir e a cada seis horas. O usuário confirma o download e a abertura do instalador. Uma sessão ou gravação ativa impede a instalação. Consulte [ATUALIZACOES.md](ATUALIZACOES.md).
+O Desk instalado verifica atualizações ao abrir e a cada cinco minutos. O usuário confirma o download e a abertura do instalador. Uma sessão ou gravação ativa impede a instalação. Consulte [ATUALIZACOES.md](ATUALIZACOES.md).

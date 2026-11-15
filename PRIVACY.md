@@ -19,7 +19,7 @@ Quem instala deve consultar os termos e políticas do provedor que escolher, em 
 ## Dados locais
 
 A partir da versão 0.12.0, a instalação consulta versões públicas no GitHub
-ao abrir e a cada seis horas. O GitHub pode observar o endereço IP e horário
+ao abrir e a cada cinco minutos. O GitHub pode observar o endereço IP e horário
 dessas consultas. Não são enviados o número Desk, favoritos, convites,
 credenciais de relay ou conteúdo da sessão. O instalador é baixado somente
 após escolha local; a instalação exige uma segunda confirmação. A assinatura

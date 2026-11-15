@@ -5,7 +5,7 @@ Clientes a partir da versão 0.12.0 buscam o manifesto `desk-update.json` na
 Clientes anteriores precisam de uma primeira instalação desta versão.
 O Desk precisa estar aberto e com acesso à internet para buscar as versões.
 
-A busca acontece quinze segundos após abrir e a cada seis horas. Também
+A busca acontece quinze segundos após abrir e a cada cinco minutos. Também
 existe a opção “Verificar atualizações” no menu. Não há instalação silenciosa:
 o usuário escolhe baixar, depois confirma abrir o instalador. A sessão e a
 gravação precisam estar encerradas. O instalador mantém o perfil local, número,

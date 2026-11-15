@@ -15,11 +15,11 @@ class UpdateController(QObject):
         super().__init__(window);self.window=window;self.available=None;self.checking=False;self.downloading=False
         self.cancel=threading.Event();self.dialog=None;self.download_path=None;self.installation=updater.installed_directory()
         self.checked.connect(self.on_checked);self.downloaded.connect(self.on_downloaded);self.progress.connect(self.on_progress)
-        self.timer=QTimer(self);self.timer.setInterval(6*60*60*1000);self.timer.timeout.connect(self.check)
+        self.timer=QTimer(self);self.timer.setInterval(5*60*1000);self.timer.timeout.connect(self.check)
         if self.installation and os.environ.get('NOVOACESSO_OFFLINE')!='1':
             self.timer.start();QTimer.singleShot(15000,self.check)
     def check(self,manual=False):
-        if self.checking or self.downloading:return
+        if self.window.closing or self.checking or self.downloading:return
         if os.environ.get('NOVOACESSO_OFFLINE')=='1':
             if manual:self.window.notice('A busca de atualizações está desativada neste modo de teste.')
             return
