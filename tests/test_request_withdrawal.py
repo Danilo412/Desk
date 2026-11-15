@@ -27,6 +27,7 @@ def test_remote_cancel_closes_real_dialog_and_next_request_connects(tmp_path,mon
             if len(calls)==1:started.append(time.monotonic());viewer.disconnect()
             else:
                 dialog=QApplication.activeModalWidget()
+                dialog.remember_device.setChecked(False)
                 next(b for b in dialog.findChildren(QPushButton) if b.text()=='Aceitar').click()
         QTimer.singleShot(60,choose);result=original(prompt)
         if started:elapsed.append(time.monotonic()-started[0]);assert not result

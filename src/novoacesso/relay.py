@@ -144,13 +144,17 @@ class InnerTLS:
     def close(self):self.outer.close()
     def shutdown(self,how):self.outer.shutdown(how)
 
-def peer_client_socket(data):
+def peer_client_socket(data,force_relay=False):
+    if force_relay and (not data.get('relay') or data['relay'].get('mode')!='metered'):
+        raise ProtocolError('Esta conexão não oferece TURN público para o modo somente relay.')
     context=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT);context.check_hostname=False;context.verify_mode=ssl.CERT_NONE;context.minimum_version=ssl.TLSVersion.TLSv1_3
     if data.get('relay'):
         route=data['relay']
         if route.get('mode')=='metered':
             from .metered_stream import open_metered_stream
-            validate_endpoint(route);outer=open_metered_stream(route,route['room'],route['route'],'viewer')
+            validate_endpoint(route)
+            if force_relay:route=dict(route,relay_only=True)
+            outer=open_metered_stream(route,route['room'],route['route'],'viewer')
         else:outer=relay_socket(route,route['room'],route['route'],'viewer')
         try:sock=InnerTLS(outer,context)
         except BaseException:outer.close();raise

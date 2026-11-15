@@ -6,6 +6,9 @@ import threading
 from PIL import Image
 import mss
 
+class CursorInfo(ctypes.Structure):
+    _fields_=[('cbSize',wintypes.DWORD),('flags',wintypes.DWORD),('hCursor',wintypes.HANDLE),('ptScreenPos',wintypes.POINT)]
+
 class DesktopBackend:
     def __init__(self):
         self.lock=threading.RLock();self.rect=None;self.keys=set();self.buttons=set()
@@ -21,6 +24,14 @@ class DesktopBackend:
     def capture_source(self):
         from .capture import CaptureSource
         return CaptureSource()
+
+    def cursor(self):
+        if not hasattr(self,'_cursor_shapes'):
+            self.user.LoadCursorW.argtypes=[wintypes.HINSTANCE,ctypes.c_void_p];self.user.LoadCursorW.restype=wintypes.HANDLE
+            self.user.GetCursorInfo.argtypes=[ctypes.POINTER(CursorInfo)];self.user.GetCursorInfo.restype=wintypes.BOOL
+            self._cursor_shapes={self.user.LoadCursorW(None,i):name for i,name in [(32512,'arrow'),(32513,'ibeam'),(32514,'wait'),(32515,'cross'),(32649,'hand'),(32646,'size_all'),(32644,'size_we'),(32645,'size_ns'),(32642,'size_nwse'),(32643,'size_nesw'),(32648,'forbidden'),(32650,'busy')]}
+        info=CursorInfo();info.cbSize=ctypes.sizeof(info)
+        return self._cursor_shapes.get(info.hCursor,'arrow') if self.user.GetCursorInfo(ctypes.byref(info)) and info.flags&1 else 'arrow'
 
     def capture(self,source,index,width):
         monitors=source.monitors

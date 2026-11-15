@@ -37,8 +37,10 @@ class MeteredStream:
                 return create_peer(self.ice_servers,self.relay_only)
             options['_pc_factory']=pc_factory
         peer=(self.peer_factory or MeteredPeer)(**options)
-        channels=[];tasks=[];selected=[None];incoming=asyncio.Queue(maxsize=16)
-        window=asyncio.BoundedSemaphore(8)
+        channels=[];tasks=[];selected=[None];incoming=asyncio.Queue(maxsize=32)
+        # 256 KiB in flight, below the data-channel's 512 KiB high-water mark.
+        # A 128 KiB window caps a 150 ms route around 7 Mbit/s.
+        window=asyncio.BoundedSemaphore(16)
         async def outbound(dc):
             try:
                 while not self.done.is_set():
@@ -66,7 +68,7 @@ class MeteredStream:
                     nominated=remote.pc.sctp.transport.transport._connection._nominated.values()
                     types=[(pair.local_candidate.type,pair.remote_candidate.type) for pair in nominated]
                     self.candidate_types=types
-                    if types:self.route_info='WebRTC: relay' if any('relay' in pair for pair in types) else 'WebRTC: conexão direta'
+                    if types:self.route_info=('WebRTC: relay forçado · TURN nas duas pontas' if self.relay_only else 'WebRTC: relay') if any('relay' in pair for pair in types) else 'WebRTC: conexão direta'
                 except (AttributeError,TypeError):pass
                 if self.relay_only and (not self.candidate_types or any(pair!=('relay','relay') for pair in self.candidate_types)):
                     self.failure='Não foi comprovada uma rota TURN em ambas as pontas.';self.done.set();dc.close();return

@@ -49,14 +49,20 @@ O executável com dependências fica em `dist/Desk`; o instalador público e os 
 
 ## Validação e limites
 
-O código 0.9.9 passou em 113 testes locais. Foram feitos testes sintéticos de 1080p/1440p por TURN público forçado, conferência dos pixels, alternância de codec, arquivo e comandos em backend simulado. O instalador particular anterior também passou em instalação/desinstalação e persistência de endereço. Esses ensaios foram feitos em um único computador com instâncias isoladas, e não equivalem a dois PCs físicos ou a um benchmark de FPS. A compilação pública tem seus próprios resultados no Actions.
+O código 0.12.0 passou em 194 testes locais. A atualização inclui um aviso de nova versão, download verificado por manifesto Ed25519 e SHA-256, e confirmação local antes de abrir o instalador. O pacote de atualização mantém a configuração existente de internet e não contém credenciais. A versão 0.12.0 ainda precisa de uma primeira instalação em clientes antigos, que não possuem o atualizador. A abertura do novo executável foi bloqueada pelo Controle de Aplicativo no computador de desenvolvimento; o teste do instalador atualizado nesse Windows permanece pendente. A assinatura do manifesto não substitui Authenticode.
+
+ Foram feitos testes sintéticos de 1080p/1440p por TURN público forçado, conferência dos pixels, alternância de codec, arquivo e comandos em backend simulado. O instalador particular anterior também passou em instalação/desinstalação e persistência de endereço. Esses ensaios foram feitos em um único computador com instâncias isoladas, e não equivalem a dois PCs físicos ou a um benchmark de FPS. A compilação pública tem seus próprios resultados no Actions.
 
 ## Code signing policy
 
-A solicitação de participação no programa gratuito da SignPath Foundation foi enviada em **14 de novembro de 2026** e aguarda análise. **Não há aprovação ou certificado concedido até o momento; os arquivos atuais continuam sem assinatura.** Veja [CODE_SIGNING.md](CODE_SIGNING.md). A autoria e a reputação do projeto são recentes; não alegamos adoção pública anterior.
+A solicitação à SignPath Foundation foi recusada em **14 de novembro de 2026**. **Não há aprovação nem certificado concedido; os executáveis e instaladores atuais continuam sem assinatura Authenticode.** Veja [CODE_SIGNING.md](CODE_SIGNING.md). A autoria e a reputação do projeto são recentes; não alegamos adoção pública anterior.
 
 ## Privacidade e licença
 
 [Política de privacidade](PRIVACY.md) · [Licença GPL-3.0-or-later](LICENSE) · licenças de dependências em `licencas/`.
 
 Problemas gerais podem ser relatados em Issues. Não publique convites, credenciais, chaves privadas ou senhas nos relatos.
+
+## Atualizações
+
+O Desk instalado verifica atualizações ao abrir e a cada seis horas. O usuário confirma o download e a abertura do instalador. Uma sessão ou gravação ativa impede a instalação. Consulte [ATUALIZACOES.md](ATUALIZACOES.md).

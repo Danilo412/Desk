@@ -2,8 +2,8 @@
 from __future__ import annotations
 import os,time,socket,math
 from pathlib import Path
-from PySide6.QtCore import Qt,QTimer,QSize,QRectF,QEvent,QPointF
-from PySide6.QtGui import QIcon,QAction,QKeySequence,QShortcut,QPainter,QColor,QPen,QLinearGradient,QPolygonF
+from PySide6.QtCore import Qt,QTimer,QSize,QRectF,QEvent,QPointF,Signal
+from PySide6.QtGui import QIcon,QAction,QKeySequence,QShortcut,QPainter,QColor,QPen,QPolygonF,QLinearGradient
 from PySide6.QtWidgets import (QWidget,QFrame,QLabel,QPushButton,QToolButton,QLineEdit,
     QPlainTextEdit,QCheckBox,QComboBox,QVBoxLayout,QHBoxLayout,QGridLayout,QTabWidget,
     QMenu,QApplication,QScrollArea,QListWidget,QListWidgetItem,QListView,QAbstractItemView,
@@ -12,8 +12,9 @@ from .device_address import format_address,normalize_address
 from .wire import ProtocolError
 from .connection_ui import ConnectionFlow,STYLE as CONNECTION_STYLE
 from .session_tools import SessionTools
-from .collaboration_ui import CollaborationTools,SessionChat,TransferPanel
+from .collaboration_ui import CollaborationTools,SessionChat,TransferPanel,FileDropArea
 from .image_controls import ImageControls,STYLE as IMAGE_STYLE
+from .advanced_ui import AdvancedTools
 
 ASSETS=Path(__file__).resolve().parents[2]/'assets'
 
@@ -21,6 +22,38 @@ class AddressField(QLineEdit):
     # Keep the existing connection API and saved-profile compatibility.
     def toPlainText(self):return self.text()
     def setPlainText(self,value):self.setText(value)
+
+class CopyAddressField(QLineEdit):
+    copyRequested=Signal()
+    COPY_HINT='Clique para copiar seu endereço · Ctrl+Shift+C'
+
+    def __init__(self):
+        super().__init__();self._press_position=None;self._dragged=False
+        self.setReadOnly(True);self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(self.COPY_HINT);self.setAccessibleDescription('Clique ou pressione Enter para copiar seu endereço Desk.')
+
+    def mousePressEvent(self,event):
+        self._press_position=event.position().toPoint() if event.button()==Qt.MouseButton.LeftButton else None
+        self._dragged=False;super().mousePressEvent(event)
+
+    def mouseMoveEvent(self,event):
+        if self._press_position is not None and (event.position().toPoint()-self._press_position).manhattanLength()>=QApplication.startDragDistance():self._dragged=True
+        super().mouseMoveEvent(event);self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mouseReleaseEvent(self,event):
+        copy=event.button()==Qt.MouseButton.LeftButton and self._press_position is not None and not self._dragged and (event.position().toPoint()-self._press_position).manhattanLength()<QApplication.startDragDistance() and self.rect().contains(event.position().toPoint())
+        self._press_position=None;super().mouseReleaseEvent(event)
+        if copy and self.text().strip():self.copyRequested.emit()
+
+    def keyPressEvent(self,event):
+        if event.key() in (Qt.Key.Key_Return,Qt.Key.Key_Enter,Qt.Key.Key_Space) and event.modifiers()==Qt.KeyboardModifier.NoModifier:
+            if self.text().strip():self.copyRequested.emit()
+            event.accept();return
+        super().keyPressEvent(event)
+
+    def set_copied(self,copied):
+        self.setProperty('copied',bool(copied));self.setToolTip('Endereço copiado' if copied else self.COPY_HINT)
+        self.style().unpolish(self);self.style().polish(self);self.update()
 
 def action_button(text,callback,primary=False):
     b=QPushButton(text);b.clicked.connect(callback)
@@ -51,6 +84,20 @@ class TileGrid(QWidget):
     def resizeEvent(self,event):
         super().resizeEvent(event);self.reflow()
 
+class QuickActionCard(QPushButton):
+    """A whole-card native button: one click target and one keyboard action."""
+    def __init__(self,title,description,action,handler,color):
+        super().__init__();self.setObjectName('featureTile');self.clicked.connect(handler)
+        self.setAccessibleName(title+' · '+action);self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet('QPushButton#featureTile {background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 '+color+',stop:1 #29282c);}')
+        col=QVBoxLayout(self);col.setContentsMargins(17,16,17,13);col.setSpacing(9)
+        for text,name in [(title,'tileTitle'),(description,'tileDescription')]:
+            label=QLabel(text);label.setWordWrap(True);label.setObjectName(name)
+            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents);col.addWidget(label)
+        col.addStretch();label=QLabel(action+'  →');label.setObjectName('tileAction')
+        label.setAlignment(Qt.AlignmentFlag.AlignRight);label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents);col.addWidget(label)
+        self.setMinimumHeight(156)
+
 class DeviceCardDelegate(QStyledItemDelegate):
     """Draw original device cards; never imply an unverified online state."""
     def paint(self,painter,option,index):
@@ -60,15 +107,16 @@ class DeviceCardDelegate(QStyledItemDelegate):
         rect=QRectF(option.rect).adjusted(3,3,-5,-5)
         selected=bool(option.state & QStyle.StateFlag.State_Selected)
         data=index.data(Qt.ItemDataRole.UserRole)
+        color=QColor(data.get('color','#35485b') if isinstance(data,dict) else '#303a45')
         gradient=QLinearGradient(rect.topLeft(),rect.bottomRight())
-        gradient.setColorAt(0,QColor(data.get('color','#35485b') if isinstance(data,dict) else '#35485b'));gradient.setColorAt(1,QColor('#263039'))
-        painter.setBrush(gradient);painter.setPen(QPen(QColor('#ed6960' if selected else '#53606b'),1))
+        gradient.setColorAt(0,color.lighter(135));gradient.setColorAt(.6,color);gradient.setColorAt(1,QColor('#1d252e'))
+        painter.setBrush(gradient);painter.setPen(QPen(QColor('#ef6b61' if selected else '#5b6875'),1))
         painter.drawRoundedRect(rect,3,3)
         empty=not isinstance(data,dict)
         display=str(index.data(Qt.ItemDataRole.DisplayRole) or '').split('\n')
         title=display[0];subtitle=' · '.join(display[1:])
         painter.setPen(QPen(QColor('#b4c2cd' if empty else '#e5edf3'),2))
-        monitor=QRectF(rect.left()+16,rect.top()+15,42,27)
+        monitor=QRectF(rect.left()+16,rect.top()+17,34,22)
         painter.setBrush(Qt.BrushStyle.NoBrush);painter.drawRoundedRect(monitor,2,2)
         x=monitor.center().x();y=monitor.bottom()
         painter.drawLine(int(x),int(y),int(x),int(y+7));painter.drawLine(int(x-10),int(y+7),int(x+10),int(y+7))
@@ -78,6 +126,8 @@ class DeviceCardDelegate(QStyledItemDelegate):
             cx=rect.right()-22;cy=rect.top()+22
             star=QPolygonF([QPointF(cx+math.cos(-math.pi/2+i*math.pi/5)*(8 if i%2==0 else 3.5),cy+math.sin(-math.pi/2+i*math.pi/5)*(8 if i%2==0 else 3.5)) for i in range(10)])
             painter.drawPolygon(star);painter.setBrush(Qt.BrushStyle.NoBrush)
+        band=QLinearGradient(0,rect.top()+57,0,rect.bottom());band.setColorAt(0,QColor(15,20,26,0));band.setColorAt(1,QColor(15,20,26,220))
+        painter.setPen(Qt.PenStyle.NoPen);painter.setBrush(band);painter.drawRect(rect.adjusted(1,57,-1,-1))
         font=option.font;font.setPointSize(11);font.setBold(True);painter.setFont(font)
         painter.setPen(QColor('#e9eef2' if not empty else '#a9b6c1'))
         painter.drawText(QRectF(rect.left()+15,rect.top()+64,rect.width()-30,25),Qt.AlignmentFlag.AlignLeft,
@@ -96,7 +146,7 @@ class DeviceCardDelegate(QStyledItemDelegate):
                 self.parent().window().favorite_star_clicked(self.parent().itemFromIndex(index));return True
         return super().editorEvent(event,model,option,index)
 
-class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
+class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,AdvancedTools):
     def build_shell(self):
         self._desk_listening_requested=True;self._desk_copy_when_ready=False
         self._desk_address_online=False
@@ -108,10 +158,12 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
         self.address_timer=QTimer(self);self.address_timer.setSingleShot(True)
         self.address_timer.timeout.connect(self.renew_address)
         self.setWindowTitle('Desk');self.resize(1280,840);self.setMinimumSize(980,680)
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint,True)
         self.setWindowIcon(QIcon(str(ASSETS/'desk.ico')))
         body=QWidget();self.setCentralWidget(body);outer=QVBoxLayout(body)
         outer.setContentsMargins(0,0,0,0);outer.setSpacing(0)
-        header=QFrame();header.setObjectName('titleStrip');row=QHBoxLayout(header)
+        from .window_chrome import DeskTitleStrip
+        header=DeskTitleStrip(self);row=QHBoxLayout(header)
         row.setContentsMargins(12,3,12,3);row.setSpacing(8)
         mark=QLabel();mark.setPixmap(QIcon(str(ASSETS/'desk.ico')).pixmap(20,20));row.addWidget(mark)
         brand=QLabel('Desk');brand.setObjectName('brand');row.addWidget(brand)
@@ -119,7 +171,11 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
         self.session_nav=action_button('Sessão',lambda:self.tabs.setCurrentIndex(1));self.session_nav.setObjectName('navTab');row.addWidget(self.session_nav)
         self.session_close=QToolButton();self.session_close.setText('×');self.session_close.setAccessibleName('Encerrar sessão');self.session_close.setToolTip('Cancelar conexão ou encerrar a sessão');self.session_close.clicked.connect(self.disconnect);self.session_close.setEnabled(False);row.addWidget(self.session_close)
         plus=QToolButton();plus.setText('+');plus.setToolTip('Nova conexão · Ctrl+L');plus.clicked.connect(self.focus_remote_address);row.addWidget(plus)
-        row.addStretch();self.status=QLabel('Pronto para conectar');self.status.setObjectName('status');row.addWidget(self.status)
+        row.addStretch()
+        self.update_available_button=QPushButton('Atualização disponível');self.update_available_button.setObjectName('outlineAccent');self.update_available_button.hide()
+        self.update_available_button.clicked.connect(lambda:self.updates.show_offer());row.addWidget(self.update_available_button)
+        self.status=QLabel('Pronto para conectar');self.status.setObjectName('status');row.addWidget(self.status)
+        header.add_window_controls(row)
         outer.addWidget(header)
         bar=QFrame();bar.setObjectName('addressBar');line=QHBoxLayout(bar)
         line.setContentsMargins(12,4,12,4);line.setSpacing(8)
@@ -139,13 +195,17 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
         menu.addSeparator()
         for label,index in [('Sessão',1),('Gerenciar acessos salvos',3),('Configurações',2),('Sobre o Desk',4)]:
             a=menu.addAction(label);a.triggered.connect(lambda checked=False,i=index:self.tabs.setCurrentIndex(i))
+        menu.addAction('Verificar atualizações',lambda:self.updates.check(True))
         menu.addSeparator();menu.addAction('Sair do Desk',self.quit_application);more.setMenu(menu);line.addWidget(more)
         outer.addWidget(bar)
         self.tabs=QTabWidget();self.tabs.setObjectName('workspace');self.tabs.tabBar().hide();outer.addWidget(self.tabs,1)
         self._build_home();self._build_session();self._build_network();self._build_saved();self._build_about()
+        self.build_advanced_tools(menu)
         self.relay_config.setEchoMode(QLineEdit.EchoMode.Password)
         self.tabs.currentChanged.connect(self.workspace_changed)
         self.workspace_changed(0)
+        from .ui_motion import InterfaceMotion
+        self.interface_motion=InterfaceMotion(self,self.identity.settings().get('interface_motion',True))
         self.remote_invite.textChanged.connect(self.remote_address_changed)
         self.remote_address_changed()
         self.set_availability('preparing')
@@ -158,6 +218,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
     def workspace_changed(self,index):
         self.home_nav.setProperty('selected',index==0);self.session_nav.setProperty('selected',index==1)
         for b in (self.home_nav,self.session_nav):b.style().unpolish(b);b.style().polish(b)
+        if hasattr(self,'interface_motion'):self.interface_motion.select_page(index)
         self.mark_chat_read()
 
     def build_session_page(self):
@@ -184,7 +245,9 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
         self.image_options=self.make_image_panel(compact=True)
         widget_action=QWidgetAction(image_menu);widget_action.setDefaultWidget(self.image_options);image_menu.addAction(widget_action)
         self.image_menu_button.setMenu(image_menu);row.addWidget(self.image_menu_button)
-        self.session_tools_button=QToolButton();self.session_tools_button.setText('Ferramentas');self.session_tools_button.setObjectName('sessionTool');self.session_tools_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.files_toolbar_button=action_button('Arquivos',lambda:self.open_session_panel(1));self.files_toolbar_button.setObjectName('sessionTool');row.addWidget(self.files_toolbar_button)
+        self.session_tools_button=QToolButton();self.session_tools_button.setText('Ferramentas');self.session_tools_button.setIcon(QIcon(str(ASSETS/'tools.svg')));self.session_tools_button.setObjectName('sessionTool');self.session_tools_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.session_tools_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         tools_menu=QMenu(self.session_tools_button);tools_menu.addAction('Conversa',lambda:self.open_session_panel(0))
         self.file_menu_action=tools_menu.addAction('Enviar arquivo…',self.send_file)
         self.save_menu_action=tools_menu.addAction('Salvar este computador',self.save_current_computer)
@@ -192,14 +255,16 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
         self.session_info_button=QToolButton();self.session_info_button.setIcon(QIcon(str(ASSETS/'info.svg')));self.session_info_button.setIconSize(QSize(19,19))
         self.session_info_button.setAccessibleName('Informações da sessão');self.session_info_button.setToolTip('Conexão, imagem e permissões');self.session_info_button.clicked.connect(self.show_session_information);row.addWidget(self.session_info_button)
         self.control=QCheckBox('Mouse e teclado');row.addWidget(self.control);row.addStretch()
-        self.session_sidebar_button=QPushButton('Conversa e ferramentas');self.session_sidebar_button.setCheckable(True)
+        self.session_sidebar_button=QPushButton('Conversa');self.session_sidebar_button.setToolTip('Conversa, arquivos e acesso salvo');self.session_sidebar_button.setCheckable(True)
         row.addWidget(self.session_sidebar_button)
         self.fullscreen_button=action_button('Tela cheia',self.fullscreen);self.fullscreen_button.setToolTip('Expandir somente a tela remota · Esc para voltar');row.addWidget(self.fullscreen_button)
+        self.fullscreen_button.setIcon(QIcon(str(ASSETS/'fullscreen.svg')))
         self.disconnect_button=action_button('Desconectar',self.disconnect);self.disconnect_button.setObjectName('dangerOutline');row.addWidget(self.disconnect_button)
         layout.addWidget(toolbar)
         self.control_hint=hint('O controle fica disponível quando o computador remoto autoriza mouse e teclado.');layout.addWidget(self.control_hint)
         self.session_split=QSplitter();self.session_split.setChildrenCollapsible(False)
         self.canvas=RemoteCanvas();self.canvas.input_event.connect(self.send_input);self.canvas.exit_requested.connect(self.exit_fullscreen)
+        self.canvas.files_dropped.connect(self.send_paths)
         self.viewer=QScrollArea();self.viewer.setWidget(self.canvas);self.viewer.setWidgetResizable(True);self.session_split.addWidget(self.viewer)
         self.session_side=QTabWidget();self.session_side.setObjectName('sessionSide');self.session_side.setMinimumWidth(280);self.session_side.setMaximumWidth(370)
         chat_page=QWidget();chat_layout=QVBoxLayout(chat_page);chat_layout.setContentsMargins(12,12,12,12)
@@ -208,8 +273,11 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
         self.send_message_button=action_button('Enviar mensagem',self.send_chat,True);chat_layout.addWidget(self.send_message_button)
         self.session_side.addTab(chat_page,'Conversa')
         files_page=QWidget();files=QVBoxLayout(files_page);files.setContentsMargins(14,16,14,14)
-        files.addWidget(hint('Envie um arquivo; a outra ponta decide onde salvá-lo.'))
-        self.send_file_button=action_button('Enviar arquivo…',self.send_file);files.addWidget(self.send_file_button)
+        files.addWidget(hint('Envie arquivos ou pastas pelo Desk. A outra ponta escolhe onde salvar.'))
+        self.file_drop_area=FileDropArea();self.file_drop_area.files_dropped.connect(self.send_paths);files.addWidget(self.file_drop_area)
+        self.send_file_button=action_button('Enviar arquivos…',self.send_file);files.addWidget(self.send_file_button)
+        self.files_folder_button=action_button('Enviar pasta…',self.send_folder_dialog);files.addWidget(self.files_folder_button)
+        self.paste_files_button=action_button('Colar arquivos',self.paste_files);files.addWidget(self.paste_files_button)
         self.send_clipboard_button=action_button('Enviar texto copiado',self.send_clipboard);files.addWidget(self.send_clipboard_button)
         self.sync_clipboard=QCheckBox('Sincronizar texto copiado');self.sync_clipboard.setToolTip('Requer a permissão concedida pelo computador compartilhado.');files.addWidget(self.sync_clipboard)
         self.transfer_panel=TransferPanel();files.addWidget(self.transfer_panel,1)
@@ -247,6 +315,8 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
 
     def update_session_actions(self):
         connected=bool(self.peer)
+        self.canvas.transfer_enabled=connected
+        for widget in (self.files_toolbar_button,self.file_drop_area,self.files_folder_button,self.paste_files_button):widget.setEnabled(connected)
         for button in (self.send_message_button,self.send_file_button,self.send_clipboard_button,self.authorize_reconnect_button):button.setEnabled(connected)
         self.save_computer_button.setEnabled(connected and bool(self.available_profile or self.last_connection_profile))
         self.disconnect_button.setEnabled(connected or self.connecting or bool(self.retry_timer.isActive()))
@@ -254,19 +324,24 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
         remote_view=not connected or getattr(self.peer,'role','')=='viewer'
         self.monitor.setEnabled(remote_view);self.image_menu_button.setEnabled(remote_view)
         self.session_info_button.setEnabled(connected);self.refresh_monitor_tools()
+        self.update_advanced_actions()
 
     def build_settings_page(self,settings,saved_config,cloud_key):
         page=QWidget();layout=QHBoxLayout(page);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
         self.settings_navigation=QListWidget();self.settings_navigation.setObjectName('settingsNavigation');self.settings_navigation.setFixedWidth(220)
         self.settings_navigation.setAccessibleName('Categorias de configurações')
         self.settings_navigation.addItems(['Conexão','Acesso sem supervisão','Dispositivos autorizados'])
-        layout.addWidget(self.settings_navigation);self.settings_pages=QStackedWidget();layout.addWidget(self.settings_pages,1)
+        sidebar=QWidget();sidebar.setObjectName('settingsSidebar');side=QVBoxLayout(sidebar);side.setContentsMargins(0,18,0,0);side.setSpacing(10)
+        title=QLabel('Configurações');title.setObjectName('settingsTitle');side.addWidget(title)
+        side.addWidget(self.settings_navigation,1);layout.addWidget(sidebar);self.settings_pages=QStackedWidget();layout.addWidget(self.settings_pages,1)
         def section(title,description):
             body=QWidget();col=QVBoxLayout(body);col.setContentsMargins(28,24,28,24);col.setSpacing(14)
-            heading=QLabel(title);heading.setObjectName('headline');col.addWidget(heading);col.addWidget(hint(description))
+            heading=QLabel(title);heading.setObjectName('settingsHeading');col.addWidget(heading);col.addWidget(hint(description))
             scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setWidget(body);self.settings_pages.addWidget(scroll);return col
         connection=section('Conexão','O Desk prepara a conexão pela internet ao abrir. Mantenha a mesma configuração nos computadores que você usa.')
         self.use_relay=QCheckBox('Usar serviço de conexão pela internet');self.use_relay.setChecked(settings.get('use_relay',bool(cloud_key)));connection.addWidget(self.use_relay)
+        self.force_relay=QCheckBox('Forçar relay público · sem conexão direta');self.force_relay.setChecked(bool(settings.get('force_relay',False) or os.environ.get('DESK_FORCE_RELAY')=='1'));connection.addWidget(self.force_relay)
+        connection.addWidget(hint('Use para testar redes que exigem retransmissão. Se o TURN não estiver disponível, a conexão falha; não volta silenciosamente para a rota direta. Desmarque para permitir a escolha automática da rota.'))
         self.relay_test_button=action_button('Testar conexão com o relay',self.test_relay);connection.addWidget(self.relay_test_button,0,Qt.AlignmentFlag.AlignLeft)
         self.relay_test_status=hint('');connection.addWidget(self.relay_test_status)
         advanced=QToolButton();advanced.setText('Configuração avançada');advanced.setCheckable(True);advanced.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
@@ -274,7 +349,8 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
         advanced_box=QWidget();advanced_layout=QVBoxLayout(advanced_box);advanced_layout.setContentsMargins(0,0,0,0)
         advanced_layout.addWidget(hint('Altere apenas se precisar substituir o serviço de conexão. As condições e a franquia dependem do provedor.'))
         self.relay_config=QLineEdit(saved_config or cloud_key);self.relay_config.setEchoMode(QLineEdit.EchoMode.Password);self.relay_config.setPlaceholderText('Configuração de conexão');self.relay_config.setAccessibleName('Configuração privada de conexão');advanced_layout.addWidget(self.relay_config)
-        advanced_box.hide();advanced.toggled.connect(advanced_box.setVisible);advanced.toggled.connect(lambda on:advanced.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow));connection.addWidget(advanced_box)
+        from .ui_motion import reveal_widget
+        advanced_box.hide();advanced.toggled.connect(lambda on:reveal_widget(advanced_box,on,self));advanced.toggled.connect(lambda on:advanced.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow));connection.addWidget(advanced_box)
         connection.addWidget(action_button('Salvar configuração de conexão',self.apply_network),0,Qt.AlignmentFlag.AlignLeft);connection.addStretch()
         access=section('Acesso sem supervisão','Somente dispositivos autorizados podem voltar sem uma nova solicitação de aceite.')
         self.unattended=QCheckBox('Habilitar acesso permanente por dispositivos autorizados');self.unattended.setChecked(settings.get('unattended',False));self.unattended.toggled.connect(self.unattended_changed);access.addWidget(self.unattended)
@@ -290,6 +366,16 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
         self.settings_navigation.addItem('Imagem')
         image=section('Imagem','Escolha a qualidade e como a tela remota será exibida. As preferências são guardadas para os próximos acessos.')
         image.addWidget(self.make_image_panel());image.addStretch()
+        self.settings_navigation.addItem('Aparência')
+        appearance=section('Aparência','Ajuste a resposta visual da interface do Desk.')
+        self.motion_enabled=QCheckBox('Animações discretas da interface')
+        self.motion_enabled.setChecked(settings.get('interface_motion',True));appearance.addWidget(self.motion_enabled)
+        appearance.addWidget(hint('Realce suave dos botões e transição entre abas. Respeita a preferência de animações do Windows.'))
+        def change_motion(enabled):
+            self.identity.configure(interface_motion=enabled)
+            if hasattr(self,'interface_motion'):self.interface_motion.set_requested(enabled)
+        self.motion_enabled.toggled.connect(change_motion);appearance.addStretch()
+        for i,icon in enumerate(['connection','lock','monitor','monitor','settings']):self.settings_navigation.item(i).setIcon(QIcon(str(ASSETS/(icon+'.svg'))))
         self.settings_navigation.currentRowChanged.connect(self.settings_pages.setCurrentIndex);self.settings_navigation.setCurrentRow(0)
         self.tabs.addTab(page,'Configurações');self.refresh_trusted()
 
@@ -313,6 +399,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
         self.copy_address_button.setIcon(QIcon(str(ASSETS/'copy.svg')))
         self.copy_address_button.setToolTip('Copiar seu endereço · Ctrl+Shift+C')
         self.copy_address_button.setAccessibleName('Copiar seu endereço')
+        self.numeric_code.set_copied(False)
 
     def paste_address(self):
         if self.peer or self.connecting:return
@@ -322,7 +409,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
         page=QWidget();outer=QVBoxLayout(page);outer.setContentsMargins(28,4,28,12);outer.setSpacing(8)
         hero=QFrame();hero.setObjectName('identityHero');hero_layout=QVBoxLayout(hero);hero_layout.setContentsMargins(0,20,0,18)
         line=QHBoxLayout();line.addStretch();label=QLabel('Este dispositivo');label.setObjectName('deviceLabel');line.addWidget(label)
-        self.numeric_code=QLineEdit();self.numeric_code.setObjectName('localAddress');self.numeric_code.setReadOnly(True)
+        self.numeric_code=CopyAddressField();self.numeric_code.setObjectName('localAddress');self.numeric_code.copyRequested.connect(self.copy_invite)
         self.numeric_code.setFrame(False);self.numeric_code.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.numeric_code.setMinimumWidth(390);self.numeric_code.setMaximumWidth(490)
         self.numeric_code.setPlaceholderText('Preparando endereço…');self.numeric_code.setAccessibleName('Seu endereço Desk')
@@ -360,17 +447,12 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
         start=QWidget();start_layout=QVBoxLayout(start);start_layout.setContentsMargins(0,14,0,0);start_layout.setSpacing(12)
         heading=QLabel('Acesso rápido');heading.setObjectName('sectionTitle');start_layout.addWidget(heading)
         grid=TileGrid();self.quick_tiles=grid
-        tiles=[('Seu Desk','Compartilhe o endereço e aceite a solicitação para mostrar sua tela.','Copiar endereço',self.copy_invite,'#973d3b'),
-            ('Acesso sem supervisão','Configure seus dispositivos autorizados para voltar a este computador.','Configurar acesso',lambda:self.tabs.setCurrentIndex(2),'#375d7c'),
-            ('Computadores favoritos','Guarde seus acessos e conecte novamente com dois cliques.','Abrir favoritos',lambda:self.open_device_section(1),'#42675d'),
-            ('Sua sessão','Tela cheia, monitores, qualidade de imagem, conversa e arquivos.','Abrir sessão',lambda:self.tabs.setCurrentIndex(1),'#695a7c')]
-        for i,(title,description,action,handler,color) in enumerate(tiles):
-            tile=QFrame();tile.setObjectName('featureTile');tile.setStyleSheet('QFrame#featureTile {background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 '+color+',stop:1 #252c34);}')
-            col=QVBoxLayout(tile);col.setContentsMargins(16,14,16,12);col.setSpacing(8)
-            t=QLabel(title);t.setObjectName('tileTitle');t.setWordWrap(True);col.addWidget(t)
-            d=QLabel(description);d.setWordWrap(True);d.setObjectName('tileDescription');col.addWidget(d);col.addStretch()
-            b=action_button(action,handler);b.setObjectName('tileAction');col.addWidget(b,0,Qt.AlignmentFlag.AlignRight)
-            tile.setMinimumHeight(165);grid.add_tile(tile)
+        tiles=[('Seu Desk','Compartilhe seu endereço para receber uma solicitação de acesso.','Copiar endereço',self.copy_invite,'#bc4641'),
+            ('Acesso sem supervisão','Configure os dispositivos autorizados a voltar a este computador.','Configurar acesso',lambda:self.tabs.setCurrentIndex(2),'#396ba0'),
+            ('Favoritos','Guarde seus computadores e encontre seus acessos rapidamente.','Abrir favoritos',lambda:self.open_device_section(1),'#397966'),
+            ('Gravar tela','Grave sua tela ou a sessão em MP4, com áudio opcional.','Abrir gravações',self.open_recordings,'#795b9e')]
+        for title,description,action,handler,color in tiles:
+            grid.add_tile(QuickActionCard(title,description,action,handler,color))
         start_layout.addWidget(grid)
         self.permission_panel=QFrame();self.permission_panel.setObjectName('permissionsPanel');p=QVBoxLayout(self.permission_panel)
         p.setContentsMargins(16,12,16,12);title=QLabel('Permissões para conexões recebidas');title.setObjectName('sectionTitle');p.addWidget(title)
@@ -409,7 +491,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
     def build_saved(self):
         page=QWidget();layout=QVBoxLayout(page);layout.setContentsMargins(28,24,28,24)
         title=QLabel('Favoritos');title.setObjectName('headline');layout.addWidget(title)
-        layout.addWidget(hint('Organize seus favoritos e acessos autorizados. Um número salvo continua exigindo aceite no computador remoto.'))
+        layout.addWidget(hint('Conexões são salvas automaticamente. Dispositivos autorizados reconectam sem novo aceite; os demais continuam pedindo autorização.'))
         layout.addWidget(action_button('Adicionar por endereço',self.add_address_favorite),0,Qt.AlignmentFlag.AlignLeft)
         self.saved_list=QListWidget();self.saved_list.itemDoubleClicked.connect(lambda *a:self.connect_saved());layout.addWidget(self.saved_list,1)
         row=QHBoxLayout();row.addWidget(action_button('Conectar',self.connect_saved,True));row.addWidget(action_button('Remover',self.remove_saved));row.addStretch();layout.addLayout(row)
@@ -618,6 +700,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
         if value:
             QApplication.clipboard().setText(value);self.activity.setText('Endereço copiado. Envie os 12 números à pessoa que fará a conexão.')
             self.copy_address_button.setIcon(QIcon(str(ASSETS/'check.svg')));self.copy_address_button.setToolTip('Endereço copiado')
+            self.numeric_code.set_copied(True)
             self.copy_address_button.setAccessibleName('Endereço copiado');self._desk_copy_reset.start(2200);return
         if self.peer or self.connecting:self.activity.setText('Há uma sessão em andamento. O endereço será renovado ao encerrar.');return
         self._desk_copy_when_ready=True;self._desk_listening_requested=True;self.prepare_address()
@@ -657,6 +740,11 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
                 box.blockSignals(True);box.setChecked(initial[i] if index==0 else False);box.blockSignals(False)
         profile.currentIndexChanged.connect(select_profile)
         for _,box in checks:box.toggled.connect(lambda checked:profile.setCurrentIndex(2))
+        remember=QCheckBox('Permitir reconexões deste computador sem novo aceite')
+        remember.setObjectName('rememberDevice');remember.setEnabled(bool(prompt.data.get('device_public')));remember.setChecked(bool(prompt.data.get('device_public')))
+        remember.setToolTip('Ao aceitar, este dispositivo será autorizado por sua chave. Você pode revogar em Configurações > Conexão. O Desk precisa permanecer aberto.')
+        right.addWidget(remember);right.addWidget(hint('A conexão será salva na outra ponta. Revogue o acesso quando quiser.'))
+        dialog.remember_device=remember
         right.addStretch();body.addLayout(right,1);col.addLayout(body)
         footer=QFrame();footer.setObjectName('acceptFooter');bottom=QHBoxLayout(footer);bottom.setContentsMargins(22,14,22,14)
         bottom.addWidget(hint('A tela só será compartilhada depois do seu aceite.'),1)
@@ -667,6 +755,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
 
     def consent_dialog(self,prompt):
         if prompt.is_cancelled() or self.closing:return False
+        self._remember_approved_public=None
         self.incoming_notice.hide()
         dialog,checks=self.build_consent_window(prompt)
         timer=QTimer(dialog);timer.setInterval(75);timer.timeout.connect(lambda:dialog.reject() if prompt.is_cancelled() or self.closing else None);timer.start()
@@ -674,6 +763,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
         if allowed:
             for source,box in checks:source.setChecked(box.isChecked())
             if self.host:self.host.permissions=self.permissions()
+            if dialog.remember_device.isEnabled() and dialog.remember_device.isChecked():self._remember_approved_public=prompt.data.get('device_public')
         dialog.deleteLater()
         return allowed
 
@@ -713,14 +803,37 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
             if self._desk_listening_requested and not self.peer and not self.connecting:self.address_timer.start(5000)
         elif name in ('host_error','persistent_error'):
             if not self._desk_address_online and not self.peer:self.set_availability('offline')
-        elif name=='stats':
-            fps=data.get('effective_fps',data['frames']/max(.001,data['seconds']))
-            self.metrics.setToolTip(self.metrics.text());self.metrics.setText(f"{data['width']} × {data['height']}  ·  {fps:.0f} FPS  ·  {data.get('rtt_ms',0):.0f} ms")
+        elif name in ('stats','receive_stats'):
+            if name=='stats':self._last_stream_stats=data
+            stats=getattr(self,'_last_stream_stats',{})
+            received=getattr(self.peer,'receive_metrics',{}) if self.peer else {}
+            fps=received.get('received_fps',stats.get('effective_fps',stats.get('frames',0)/max(.001,stats.get('seconds',1))))
+            if stats:
+                self.metrics.setToolTip(self.metrics.text());self.metrics.setText(f"{stats.get('width',0)} × {stats.get('height',0)}  ·  {fps:.0f} FPS recebidos  ·  {stats.get('rtt_ms',0):.0f} ms")
+            self.record_connection_metrics(stats,received)
         self.on_connection_event(name,data)
         self.on_collaboration_event(name,data)
+        self.on_advanced_event(name,data)
         if name=='incoming_cancelled':
             text=data['text'];self.incoming_notice_text.setText(text);self.incoming_notice.show();self.incoming_notice_timer.start(6500)
             self.activity.setText(text);self.statusBar().showMessage(text,6500)
+
+    def record_connection_metrics(self,stats,received):
+        path=os.environ.get('DESK_METRICS_PATH')
+        if not path or time.monotonic()-getattr(self,'_last_metrics_write',0)<.9:return
+        self._last_metrics_write=time.monotonic()
+        try:
+            import json
+            from pathlib import Path
+            target=Path(path)
+            if target.exists() and target.stat().st_size>2*1024*1024:return
+            values={k:v for source in (stats,received) for k,v in source.items() if k in ('width','height','encode_ms','rtt_ms','delivery_ms','effective_fps','received_fps','decode_ms','received_kbps','deflate','vp8') and type(v) in (int,float)}
+            outer=getattr(getattr(getattr(self.peer,'channel',None),'sock',None),'outer',None)
+            pairs=getattr(outer,'candidate_types',[])
+            values.update(time_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),candidate_types=[[a,b] for a,b in pairs if a in ('host','srflx','prflx','relay') and b in ('host','srflx','prflx','relay')],force_relay=bool(getattr(outer,'relay_only',False)))
+            target.parent.mkdir(parents=True,exist_ok=True)
+            with target.open('a',encoding='utf-8') as output:output.write(json.dumps(values)+'\n')
+        except (OSError,TypeError,ValueError):pass
 
     def style_native_titlebar(self):
         if os.name!='nt' or os.environ.get('QT_QPA_PLATFORM')=='offscreen':return
@@ -732,36 +845,56 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls):
         except (AttributeError,OSError):pass
 
 STYLE="""
-QWidget {font-family:'Segoe UI';font-size:13px;color:#ededed;background:#202020;}
-QMainWindow {background:#202020;} QFrame#titleStrip{background:#272727;border-bottom:1px solid #383838;}
-QFrame#addressBar{background:#151515;border-bottom:2px solid #ef443b;}
+QWidget {font-family:'Segoe UI';font-size:13px;color:#eceeef;background:#232121;}
+QMainWindow {background:#232121;} QFrame#titleStrip{background:#282a2d;border-bottom:1px solid #36393d;}
+QFrame#addressBar{background:#191b1d;border-bottom:1px solid #3c3e42;}
 QLabel#brand{font-size:17px;font-weight:600;background:transparent;}
 QLabel#status{font-size:12px;color:#a7c9ad;background:transparent;padding:3px 8px;}
 QLabel#onlineDot{color:#68c56e;background:transparent;} QLabel#headline{font-size:25px;font-weight:600;}
-QLabel#muted{color:#a7a7a7;background:transparent;} QLabel#deviceLabel{font-size:19px;}
-QLabel#sectionTitle{font-weight:600;} QLabel#tileTitle{font-size:18px;font-weight:600;background:transparent;}
-QLabel#tileDescription{color:#f0f0f0;background:transparent;}
-QFrame#identityHero{border:0;} QFrame#featureTile{border:1px solid #505050;border-radius:3px;}
-QFrame#permissionsPanel{background:#252525;border:1px solid #3a3a3a;border-radius:3px;}
+QLabel#muted{color:#aeb2b8;background:transparent;} QLabel#deviceLabel{font-size:16px;color:#bdc1c6;}
+QLabel#sectionTitle{font-weight:600;} QLabel#tileTitle{font-size:16px;font-weight:600;background:transparent;}
+QLabel#tileDescription{color:#b8bdc4;background:transparent;}
+QFrame#identityHero{border:0;} QFrame#featureTile{background:#282b2e;border:1px solid #3b3f44;border-radius:6px;}
+QFrame#featureTile:hover{border-color:#5b6168;}
+QFrame#permissionsPanel{background:#25282b;border:1px solid #3b3f44;border-radius:6px;}
 QFrame#permissionsPanel QLabel,QFrame#permissionsPanel QCheckBox{background:transparent;}
-QPushButton{background:#303030;border:1px solid #505050;border-radius:3px;padding:8px 16px;min-height:18px;}
-QPushButton:hover{background:#3b3b3b;border-color:#777;} QPushButton:disabled{color:#777;border-color:#383838;background:#252525;}
-QPushButton#primary{background:#ef443b;border-color:#ef443b;color:white;font-weight:600;}
-QPushButton#primary:hover{background:#ff594f;} QPushButton#primary:disabled{background:#733b38;border-color:#733b38;color:#b99390;}
-QPushButton#navTab{background:#202020;border:1px solid #373737;min-width:108px;padding:2px 12px;}
-QPushButton#navTab[selected="true"]{background:#373737;border-bottom:2px solid #ef443b;}
-QPushButton#tileAction{background:transparent;border:0;font-weight:600;text-align:right;padding:3px 0;}
-QPushButton#tileAction:hover{color:white;text-decoration:underline;}
-QToolButton{background:transparent;border:0;border-radius:3px;padding:7px;color:#ddd;font-size:18px;}
-QToolButton:hover{background:#3a3a3a;} QToolButton#outlineAccent{border:1px solid #bd4c46;color:#f0645c;font-size:13px;padding:5px 11px;}
+QPushButton{background:#303439;border:1px solid #51565d;border-radius:5px;padding:8px 16px;min-height:18px;}
+QPushButton:hover{background:#3a3f45;border-color:#707780;}
+QPushButton:pressed{background:#24282c;border-color:#e17972;}
+QPushButton:focus{border-color:#e8918b;}
+QPushButton:disabled{color:#81868d;border-color:#3b3e43;background:#292c30;}
+QPushButton#primary{background:#e34d44;border-color:#e34d44;color:white;font-weight:600;}
+QPushButton#primary:hover{background:#ef5c52;border-color:#ef5c52;}
+QPushButton#primary:pressed{background:#bf3933;border-color:#ffaba4;}
+QPushButton#primary:focus{border-color:#ffd5d1;}
+QPushButton#primary:disabled{background:#693b39;border-color:#693b39;color:#c09a97;}
+QPushButton#navTab{background:transparent;border:1px solid transparent;min-width:108px;padding:5px 12px;}
+QPushButton#navTab:hover{background:#34383d;}
+QPushButton#navTab[selected="true"]{background:#34383d;color:#fff;}
+QPushButton#navTab:focus{border-color:#e8918b;}
+QFrame#navigationIndicator{background:#ef655b;border:0;}
+QPushButton#tileAction{background:#303439;border:1px solid #51565d;font-weight:600;text-align:center;padding:5px 10px;}
+QPushButton#tileAction:hover{background:#3a3f45;border-color:#707780;color:white;}
+QPushButton#tileAction:pressed{background:#24282c;border-color:#e17972;}
+QPushButton#tileAction:focus{border-color:#e8918b;}
+QToolButton{background:transparent;border:1px solid transparent;border-radius:5px;padding:6px;color:#dde0e4;font-size:18px;}
+QToolButton:hover{background:#373c42;}
+QToolButton:pressed{background:#24282c;border-color:#e17972;}
+QToolButton:focus{border-color:#e8918b;}
+QToolButton:disabled{color:#777d85;background:transparent;border-color:transparent;}
+QToolButton#outlineAccent{border:1px solid #7e5652;color:#f59a92;font-size:13px;padding:5px 11px;}
+QToolButton#outlineAccent:hover{background:#423230;border-color:#ba6f68;}
+QToolButton#outlineAccent:pressed{background:#532f2b;}
+QToolButton#outlineAccent:focus{border-color:#ffd5d1;}
 QToolButton#viewToggle{font-size:17px;padding:4px 8px;color:#929aa0;border:1px solid transparent;}
 QToolButton#viewToggle:checked{background:#393333;border-color:#8e524c;color:#f0786f;}
 QPushButton#textAction{background:transparent;border:0;padding:2px 4px;color:#bfbfbf;}
 QPushButton#textAction:hover{color:#f0786f;}
 QToolButton::menu-indicator{image:none;}
-QLineEdit,QPlainTextEdit,QComboBox{background:#191919;border:1px solid #515151;border-radius:3px;padding:8px;selection-background-color:#91423f;}
+QLineEdit,QPlainTextEdit,QComboBox{background:#191b1e;border:1px solid #51565d;border-radius:5px;padding:8px;selection-background-color:#91423f;}
 QLineEdit:focus,QPlainTextEdit:focus,QComboBox:focus{border-color:#cf6862;}
-QLineEdit#remoteAddress{background:#121212;border-color:#343434;font-size:15px;padding:6px 12px;}
+QLineEdit#remoteAddress{background:#151719;border-color:#3d4248;font-size:15px;padding:6px 12px;}
+QLineEdit#remoteAddress:focus{border-color:#e8918b;}
 QLineEdit#localAddress{background:transparent;color:#f04a43;font-size:38px;font-weight:600;letter-spacing:1px;border:0;padding:4px 8px;}
 QComboBox{min-height:20px;} QCheckBox{spacing:8px;padding:4px 0;} QCheckBox::indicator{width:16px;height:16px;}
 QCheckBox::indicator:unchecked{background:#181818;border:1px solid #777;border-radius:2px;}
@@ -769,11 +902,13 @@ QCheckBox::indicator:checked{background:#ef443b;border:1px solid #ef443b;border-
 QTabWidget#workspace::pane{border:0;} QTabWidget#homeSections::pane{border:0;border-top:1px solid #444;}
 QTabBar::tab{background:transparent;color:#9d9d9d;padding:12px 20px;border-bottom:2px solid transparent;}
 QTabBar::tab:selected{color:#f15a52;border-bottom:2px solid #ef443b;font-weight:600;} QTabBar::tab:hover{color:#eee;}
-QListWidget{background:#202020;border:1px solid #414141;border-radius:3px;padding:10px;outline:0;}
-QListWidget#deviceCards{border:0;padding:4px 0;} QListWidget#deviceCards::item{background:#2b353e;border:1px solid #506070;border-radius:3px;padding:10px;}
+QListWidget{background:#202224;border:1px solid #41464d;border-radius:5px;padding:10px;outline:0;}
+QListWidget#deviceCards{border:0;padding:4px 0;} QListWidget#deviceCards::item{background:#292d31;border:1px solid #515860;border-radius:5px;padding:10px;}
 QListWidget#deviceCards::item:selected{background:#453938;border-color:#e86d64;}
 QListWidget::item{padding:12px;} QListWidget::item:selected{background:#493331;color:#fff;}
-QMenu{background:#292929;border:1px solid #555;padding:5px;} QMenu::item{padding:8px 26px;} QMenu::item:selected{background:#47322f;}
+QMenu{background:#292d31;border:1px solid #555c65;padding:5px;border-radius:5px;} QMenu::item{padding:8px 26px;border-radius:3px;} QMenu::item:selected{background:#493632;}
+QMenu::item:disabled{color:#7b8189;} QMenu::separator{height:1px;background:#43484f;margin:5px 8px;}
+QToolTip{background:#343a41;color:#f1f2f4;border:1px solid #626b76;padding:5px;}
 QScrollArea{border:0;} QStatusBar{color:#999;border-top:1px solid #363636;font-size:12px;}
 QScrollBar:vertical{background:#242424;width:10px;margin:0;} QScrollBar::handle:vertical{background:#505050;min-height:32px;border-radius:4px;}
 QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;} QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent;}
@@ -791,9 +926,13 @@ QFrame#acceptFooter{background:#272727;border-top:1px solid #414141;}
 QFrame#acceptFooter QLabel{background:transparent;}
 QPushButton#acceptConnection{background:#357b56;border-color:#4f9c70;color:white;font-weight:600;min-width:82px;}
 QPushButton#acceptConnection:hover{background:#439264;}
+QPushButton#acceptConnection:pressed{background:#285e41;border-color:#b3e4c7;}
+QPushButton#acceptConnection:focus{border-color:#b3e4c7;}
 QToolButton#sessionTool{font-size:13px;padding:7px 10px;}
 QPushButton#dangerOutline{border-color:#a85d56;color:#f08077;background:#302624;}
 QPushButton#dangerOutline:hover{background:#563632;}
+QPushButton#dangerOutline:pressed{background:#6c3831;border-color:#ffaba4;}
+QPushButton#dangerOutline:focus{border-color:#ffaba4;}
 QPushButton#dangerOutline:disabled{border-color:#49403f;color:#81716f;}
 QPushButton:checked{background:#493a38;border-color:#a96a64;}
 QTabWidget#sessionSide::pane{border:1px solid #404040;}
@@ -805,3 +944,5 @@ QListWidget#settingsNavigation::item:selected{background:#3c302e;border-left-col
 STYLE+='\nQCheckBox::indicator:checked {image:url("'+(ASSETS/'check.svg').as_posix()+'");}\n'
 STYLE+=CONNECTION_STYLE
 STYLE+=IMAGE_STYLE
+from .desk_theme import STYLE as FIDELITY_STYLE
+STYLE+=FIDELITY_STYLE

@@ -2,7 +2,9 @@
 from __future__ import annotations
 import time
 from .wire import ProtocolError
-from PySide6.QtCore import Qt,QEvent,QTimer
+from PySide6.QtCore import Qt,QEvent,QTimer,QVariantAnimation,QPoint,QEasingCurve
+from PySide6.QtGui import QIcon
+from pathlib import Path
 from PySide6.QtWidgets import QWidget,QFrame,QLabel,QVBoxLayout,QHBoxLayout,QPushButton,QProgressBar,QToolButton
 
 
@@ -31,7 +33,7 @@ class FullscreenBar(QFrame):
     def __init__(self,owner):
         super().__init__(owner.viewer.viewport());self.owner=owner;self.setObjectName('fullscreenBar')
         row=QHBoxLayout(self);row.setContentsMargins(12,6,12,6);row.setSpacing(10)
-        label=QLabel('Desk');label.setObjectName('brand');row.addWidget(label)
+        brand=QLabel('Desk');brand.setObjectName('brand');row.addWidget(brand)
         self.monitors=QToolButton();self.monitors.setText('Monitores');self.monitors.setObjectName('sessionTool');self.monitors.setAccessibleName('Monitores em tela cheia')
         self.monitors.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup);self.monitors.setMenu(owner.make_monitor_menu(self.monitors));row.addWidget(self.monitors)
         self.image=QToolButton();self.image.setText('Imagem');self.image.setObjectName('sessionTool');self.image.setAccessibleName('Imagem em tela cheia')
@@ -45,11 +47,33 @@ class FullscreenBar(QFrame):
         self.minimize=QPushButton('Minimizar');self.minimize.setToolTip('Voltar à janela e minimizar sem encerrar a sessão');self.minimize.clicked.connect(owner.minimize_remote_session);row.addWidget(self.minimize)
         end=QPushButton('Desconectar');end.setObjectName('dangerOutline');end.clicked.connect(owner.disconnect);row.addWidget(end)
         self.timeout=QTimer(self);self.timeout.setSingleShot(True);self.timeout.timeout.connect(self.hide_if_unused)
+        self.slide=QVariantAnimation(self);self.slide.setDuration(160);self.slide.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.slide.valueChanged.connect(self.move);self.slide.finished.connect(self.slide_finished);self._hide_after_slide=False
+        assets=Path(__file__).resolve().parents[2]/'assets'
+        for button,icon,label in [(self.monitors,'monitor','Selecionar monitor'),(self.image,'monitor','Imagem e qualidade'),(self.actions,'menu','Ferramentas'),(self.pin,'pin','Fixar a barra')]:
+            button.setIcon(QIcon(str(assets/(icon+'.svg'))));button.setToolTip(label)
+            if isinstance(button,QToolButton):button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        for button,icon,label in [(self.details,'info','Informações da sessão'),(back,'restore','Sair da tela cheia · Esc'),(self.minimize,'minimize','Minimizar'),(end,'disconnect','Desconectar')]:
+            button.setIcon(QIcon(str(assets/(icon+'.svg'))));button.setToolTip(label);button.setAccessibleName(label);button.setText('');button.setFixedWidth(34)
+        self.pin.setText('');self.pin.setAccessibleName('Fixar a barra de tela cheia');self.pin.setFixedWidth(34)
+        self.monitors.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        while row.count():row.takeAt(0)
+        row.addWidget(brand);row.addWidget(self.monitors);row.addWidget(self.image);row.addStretch()
+        row.addWidget(self.minimize);row.addWidget(back);row.addStretch()
+        for button in (self.details,self.pin,self.actions,end):row.addWidget(button)
+        for menu in (self.monitors.menu(),self.image.menu(),self.actions.menu()):menu.aboutToShow.connect(self.reveal)
         owner.viewer.viewport().installEventFilter(self);owner.canvas.installEventFilter(self);self.hide()
 
     def reveal(self):
         if not self.owner._fullscreen:return
-        self.adjustSize();self.move(max(0,(self.parent().width()-self.width())//2),0);self.show();self.raise_()
+        was_hidden=self.isHidden();self.slide.stop();self._hide_after_slide=False
+        self.setFixedWidth(self.parent().width());self.adjustSize();x=0
+        target=QPoint(x,0);motion=getattr(self.owner,'interface_motion',None)
+        if motion and motion.enabled and (was_hidden or self.y()<0):
+            start=QPoint(x,-self.height()+3) if was_hidden else QPoint(x,self.y())
+            self.move(start);self.show();self.slide.setStartValue(start);self.slide.setEndValue(target);self.slide.start()
+        else:self.move(target);self.show()
+        self.raise_()
         if self.pin.isChecked():self.timeout.stop()
         else:self.timeout.start(1800)
 
@@ -60,7 +84,23 @@ class FullscreenBar(QFrame):
     def hide_if_unused(self):
         if self.pin.isChecked():return
         if self.underMouse() or any(menu.isVisible() for menu in (self.image.menu(),self.monitors.menu(),self.actions.menu())):self.timeout.start(800)
-        else:self.hide()
+        else:
+            motion=getattr(self.owner,'interface_motion',None)
+            if self.owner._fullscreen and motion and motion.enabled and self.isVisible():
+                self.slide.stop();self._hide_after_slide=True;self.slide.setStartValue(self.pos());self.slide.setEndValue(QPoint(self.x(),-self.height()+3));self.slide.start()
+            else:self.hide()
+
+    def slide_finished(self):
+        if self._hide_after_slide:self.hide()
+
+    def hide(self):
+        if hasattr(self,'slide'):self.slide.stop();self._hide_after_slide=False
+        super().hide()
+
+    def finish_motion(self):
+        hide=self._hide_after_slide;self.slide.stop()
+        if hide or not self.owner._fullscreen:self.hide()
+        else:self.move(self.x(),0)
 
     def eventFilter(self,obj,event):
         if event.type()==QEvent.Type.Resize and obj is self.parent() and self.isVisible():self.reveal()

@@ -52,6 +52,7 @@ def test_connect_approve_remote_screen_end_and_reject(tmp_path,monkeypatch):
         decision=next(decisions)
         def choose():
             dialog=QApplication.activeModalWidget();dialog.findChild(QComboBox).setCurrentIndex(1)
+            dialog.remember_device.setChecked(False)  # Este teste cobre sessões temporárias.
             next(b for b in dialog.findChildren(QPushButton) if b.text()==decision).click()
         QTimer.singleShot(60,choose);return original_consent(self,prompt)
     monkeypatch.setattr(MainWindow,'consent_dialog',consent)

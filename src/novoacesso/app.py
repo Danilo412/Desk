@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 
-from PySide6.QtCore import Qt,QObject,Signal,QTimer,QRectF
+from PySide6.QtCore import Qt,QObject,Signal,QTimer,QRectF,QEvent
 from PySide6.QtGui import QColor,QImage,QPainter,QPen,QFont,QAction,QShortcut,QKeySequence
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QGridLayout,
     QLabel,QPushButton,QLineEdit,QPlainTextEdit,QCheckBox,QComboBox,QTabWidget,QFrame,
@@ -50,10 +50,17 @@ class AcceleratedSurface(QOpenGLWidget):
 class RemoteCanvas(QWidget):
     input_event=Signal(dict)
     exit_requested=Signal()
+    stroke_finished=Signal(dict)
+    annotation_mode_changed=Signal(bool)
+    files_dropped=Signal(list)
     def escape_fullscreen(self):
+        if self.annotation_mode:self.set_annotation_mode(False);self.annotation_mode_changed.emit(False);self._local_escape=True;return
         self._local_escape=True;self.exit_requested.emit()
     def __init__(self):
         super().__init__();self.image=None;self.allow_control=False;self.rect=QRectF();self.last_move=0;self.display_mode='fit';self.surface=None
+        self.pressed_buttons=set();self.remote_cursor_shape='arrow'
+        self.transfer_enabled=False;self.setAcceptDrops(True)
+        self.annotation_mode=False;self.annotation_shape='freehand';self.annotation_color='#ef443b';self.annotation_width=3;self.annotations=[];self.current_stroke=None
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus);self.setMouseTracking(True)
         self.setMinimumSize(420,280);self.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Expanding)
         self.setAccessibleName("Tela remota. Clique para focar o teclado quando o controle estiver autorizado.")
@@ -94,33 +101,74 @@ class RemoteCanvas(QWidget):
         self.rect=QRectF((self.width()-size.width())/2,(self.height()-size.height())/2,size.width(),size.height())
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         p.drawImage(self.rect,self.image)
+        self.paint_annotations(p,self.rect)
         if self.hasFocus() and self.allow_control:
             p.setPen(QPen(QColor("#ef443b"),2));p.drawRect(self.contentsRect().adjusted(1,1,-2,-2))
 
-    def point(self,event):
+    def point(self,event,clamp=False):
         pos=event.position()
-        if not self.image or not self.rect.contains(pos) or not self.allow_control:return None
+        if not self.image or self.rect.isEmpty() or (not clamp and not self.rect.contains(pos)) or not self.allow_control:return None
         return dict(x=min(1,max(0,(pos.x()-self.rect.x())/self.rect.width())),y=min(1,max(0,(pos.y()-self.rect.y())/self.rect.height())))
 
     def mouseMoveEvent(self,event):
-        point=self.point(event);now=time.monotonic()
-        if point and now-self.last_move>.025:
+        if self.annotation_mode:
+            point=self.annotation_point(event)
+            if self.current_stroke and point:
+                points=self.current_stroke['points']
+                if self.annotation_shape!='freehand':points[-1]=point
+                elif len(points)<512:points.append(point)
+                else:points[-1]=point
+                self.update()
+            return
+        point=self.point(event,clamp=bool(self.pressed_buttons));now=time.monotonic()
+        if point and now-self.last_move>.008:
             self.last_move=now;self.input_event.emit(dict(event="move",**point))
 
+    def dragEnterEvent(self,event):
+        from .collaboration_ui import local_file_paths
+        if self.transfer_enabled and local_file_paths(event.mimeData()):event.acceptProposedAction()
+        else:event.ignore()
+
+    def dropEvent(self,event):
+        from .collaboration_ui import local_file_paths
+        paths=local_file_paths(event.mimeData())
+        if self.transfer_enabled and paths:self.files_dropped.emit(paths);event.acceptProposedAction()
+        else:event.ignore()
+
     def mousePressEvent(self,event):
+        if self.annotation_mode:
+            self.setFocus();point=self.annotation_point(event)
+            if event.button()==Qt.MouseButton.RightButton:self.current_stroke=None;self.update();return
+            if point and event.button()==Qt.MouseButton.LeftButton:self.current_stroke=dict(shape=self.annotation_shape,color=self.annotation_color,width=self.annotation_width,points=[point,point]);self.update()
+            return
         self.setFocus();self.mouse_button(event,True)
-    def mouseReleaseEvent(self,event):self.mouse_button(event,False)
+    def mouseReleaseEvent(self,event):
+        if self.annotation_mode:
+            if event.button()==Qt.MouseButton.LeftButton and self.current_stroke:
+                stroke=self.current_stroke;self.current_stroke=None
+                if len(self.annotations)<100 and sum(len(s['points']) for s in self.annotations)+len(stroke['points'])<=16000:
+                    self.annotations.append(stroke);self.stroke_finished.emit(stroke)
+                self.update()
+            return
+        self.mouse_button(event,False)
+    def mouseDoubleClickEvent(self,event):
+        self.mousePressEvent(event)
     def mouse_button(self,event,down):
-        point=self.point(event)
+        point=self.point(event,clamp=not down and event.button() in self.pressed_buttons)
         buttons={Qt.MouseButton.LeftButton:"left",Qt.MouseButton.RightButton:"right",Qt.MouseButton.MiddleButton:"middle"}
-        if point and event.button() in buttons:self.input_event.emit(dict(event="button",button=buttons[event.button()],down=down,**point))
+        if point and event.button() in buttons:
+            (self.pressed_buttons.add if down else self.pressed_buttons.discard)(event.button())
+            self.input_event.emit(dict(event="button",button=buttons[event.button()],down=down,**point))
         elif not down and self.allow_control:self.input_event.emit(dict(event="release"))
     def wheelEvent(self,event):
         if self.allow_control and self.image:self.input_event.emit(dict(event="wheel",delta=max(-1200,min(1200,event.angleDelta().y()))))
     def keyPressEvent(self,event):
+        if self.annotation_mode:
+            if event.key()==Qt.Key.Key_Escape:self.set_annotation_mode(False);self.annotation_mode_changed.emit(False);self._local_escape=True
+            event.accept();return
         if event.key()==Qt.Key.Key_Escape and self.window().isFullScreen():
             self.escape_fullscreen();event.accept();return
-        if self.allow_control and not event.isAutoRepeat():
+        if self.allow_control:
             vk=event.nativeVirtualKey()
             if 1<=vk<=254:self.input_event.emit(dict(event="key",vk=vk,down=True))
             event.accept()
@@ -133,7 +181,38 @@ class RemoteCanvas(QWidget):
             if 1<=vk<=254:self.input_event.emit(dict(event="key",vk=vk,down=False))
             event.accept()
     def focusOutEvent(self,event):
-        self.input_event.emit(dict(event="release"));self.update();super().focusOutEvent(event)
+        self.pressed_buttons.clear();self.input_event.emit(dict(event="release"));self.update();super().focusOutEvent(event)
+
+    def focusNextPrevChild(self,next):
+        if self.allow_control:return False
+        return super().focusNextPrevChild(next)
+
+    def event(self,event):
+        if event.type()==QEvent.Type.ShortcutOverride and self.allow_control and self.hasFocus():
+            if event.key()!=Qt.Key.Key_Escape or not self.window().isFullScreen():event.accept();return True
+        return super().event(event)
+
+    def update_remote_cursor(self,shape=None):
+        if shape:self.remote_cursor_shape=shape
+        shapes={'arrow':Qt.CursorShape.ArrowCursor,'ibeam':Qt.CursorShape.IBeamCursor,'wait':Qt.CursorShape.WaitCursor,'cross':Qt.CursorShape.CrossCursor,'hand':Qt.CursorShape.PointingHandCursor,'size_all':Qt.CursorShape.SizeAllCursor,'size_we':Qt.CursorShape.SizeHorCursor,'size_ns':Qt.CursorShape.SizeVerCursor,'size_nwse':Qt.CursorShape.SizeFDiagCursor,'size_nesw':Qt.CursorShape.SizeBDiagCursor,'forbidden':Qt.CursorShape.ForbiddenCursor,'busy':Qt.CursorShape.BusyCursor}
+        self.setCursor(Qt.CursorShape.CrossCursor if self.annotation_mode else shapes.get(self.remote_cursor_shape,Qt.CursorShape.ArrowCursor) if self.allow_control else Qt.CursorShape.ArrowCursor)
+
+    def set_annotation_mode(self,enabled):
+        self.annotation_mode=bool(enabled);self.current_stroke=None;self.update_remote_cursor()
+        if enabled:self.input_event.emit(dict(event='release'))
+        self.update()
+
+    def annotation_point(self,event):
+        if self.image is None or not self.rect.contains(event.position()) or self.rect.isEmpty():return None
+        return [(event.position().x()-self.rect.x())/self.rect.width(),(event.position().y()-self.rect.y())/self.rect.height()]
+
+    def paint_annotations(self,painter,rect):
+        from .annotations import paint_stroke
+        for stroke in [*self.annotations,*([self.current_stroke] if self.current_stroke else [])]:paint_stroke(painter,rect,stroke)
+
+    def snapshot(self):
+        if self.image is None:return QImage()
+        image=self.image.copy();painter=QPainter(image);self.paint_annotations(painter,QRectF(0,0,image.width(),image.height()));painter.end();return image
 
 def button(label,handler,primary=False):
     result=QPushButton(label);result.clicked.connect(handler)
@@ -158,11 +237,13 @@ class MainWindow(DeskShell,QMainWindow):
         from .identity import IdentityStore
         self.identity=IdentityStore();self.persistent=None;self.session_gate=threading.Lock();self.force_exit=False
         self.backend=None;self._fullscreen=False;self.fullscreen_window=None
-        self.control_authorized=False
+        self.control_authorized=False;self._remember_approved_public=None;self._viewer_gate_held=False
         self.frame_lock=threading.Lock();self.latest_frame=None;self.available_profile='';self.last_connection_profile=''
         self.active_saved_id=None;self.next_saved_id=None;self.reconnect_profile='';self.manual_disconnect=True;self.retry_count=0
         self.retry_timer=QTimer(self);self.retry_timer.setSingleShot(True);self.retry_timer.timeout.connect(self.retry_connection)
         self.build_shell()
+        from .update_ui import UpdateController
+        self.updates=UpdateController(self)
         self.apply_view_preferences(self.identity.settings().get('view'))
         self.frame_timer=QTimer(self);self.frame_timer.setInterval(16);self.frame_timer.timeout.connect(self.render_latest_frame);self.frame_timer.start()
         self.statusBar().showMessage("Nenhum acesso remoto ativo.")
@@ -282,12 +363,16 @@ class MainWindow(DeskShell,QMainWindow):
     def relay_endpoint(self):
         if not self.use_relay.isChecked():return None
         from .relay import endpoint_from_token
-        return endpoint_from_token(self.relay_config.text())
+        endpoint=endpoint_from_token(self.relay_config.text())
+        if getattr(self,'force_relay',None) and self.force_relay.isChecked():
+            if endpoint.get('mode')!='metered':raise ValueError('Forçar relay requer o serviço de conexão TURN público.')
+            endpoint=dict(endpoint,relay_only=True)
+        return endpoint
     def apply_network(self):
         try:
             self.relay_endpoint()
             value=self.relay_config.text().strip()
-            self.identity.configure(relay_config=value,use_relay=self.use_relay.isChecked(),relay_customized=value!=self.shipped_cloud_key,shipped_relay_revision=self.shipped_cloud_revision)
+            self.identity.configure(relay_config=value,use_relay=self.use_relay.isChecked(),force_relay=self.force_relay.isChecked(),relay_customized=value!=self.shipped_cloud_key,shipped_relay_revision=self.shipped_cloud_revision)
             if self.unattended.isChecked():self.start_persistent()
             self.activity.setText('Configuração de conexão salva neste usuário.')
         except Exception as ex:self.notice(str(ex))
@@ -362,6 +447,7 @@ class MainWindow(DeskShell,QMainWindow):
         with self.frame_lock:image=self.latest_frame;self.latest_frame=None
         if image is not None and not self.closing:
             self.canvas.set_frame(image)
+            self.on_advanced_frame(image)
             if self._connection_state=='receiving':self.show_connection_state('active')
 
     def request(self,kind,data,timeout):
@@ -380,6 +466,7 @@ class MainWindow(DeskShell,QMainWindow):
         try:
             if prompt.kind=="consent":
                 prompt.answer=self.consent_dialog(prompt)
+            elif prompt.kind=='advanced_action':prompt.answer=self.advanced_prompt(prompt)
             elif prompt.kind=="save_file":
                 name=prompt.data["name"];size=prompt.data["size"]
                 dialog=QFileDialog(self.fullscreen_window or self,f"Receber {name} ({size/1024:.1f} KB)",str(Path.home()/"Downloads"))
@@ -438,15 +525,29 @@ class MainWindow(DeskShell,QMainWindow):
             self.remote_invite.setFocus();self.activity.setText("Digite ou cole o endereço do outro dispositivo.");return
         self._desk_last_remote=self.remote_invite.toPlainText().strip();self.address_timer.stop()
         if self.peer or self.connecting:self.notice("Já existe uma conexão ativa ou em andamento.");return
-        if self.persistent:self.notice('Desative o acesso permanente deste computador antes de acessar outro computador nesta janela.');return
         self.stop_sharing();token=self.remote_invite.toPlainText().strip()
         if not token:self.notice("Digite o código ou cole o convite do outro computador.");return
+        if not retry and not token.startswith(('NA1-','NAU1-')):
+            from .saved_connections import authorized_for_address,open_connection
+            entry=authorized_for_address(self.identity,token)
+            if entry:
+                password=''
+                if entry['locked']:
+                    password,ok=QInputDialog.getText(self,'Abrir acesso salvo','Senha local:',QLineEdit.EchoMode.Password)
+                    if not ok:return
+                try:token=open_connection(self.identity,entry['id'],password)
+                except ValueError as ex:self.notice(str(ex));return
+                self.next_saved_id=entry['id']
+        if self.persistent and not self._viewer_gate_held:
+            if not self.session_gate.acquire(False):self.notice('Este computador já possui uma sessão ativa.');return
+            self._viewer_gate_held=True
         self.retry_timer.stop()
         if not retry:
             self.manual_disconnect=False;self.retry_count=0
             self.active_saved_id=self.next_saved_id;self.next_saved_id=None
             self.reconnect_profile=token if token.startswith('NAU1-') else ''
         endpoint=self.relay_endpoint();numeric_key=endpoint.get('api_key') if endpoint and endpoint.get('mode')=='metered' else self.cloud_signaling_key
+        force_relay=self.force_relay.isChecked()
         self.connecting=True;self.connect_button.setEnabled(False);self.status.setText("Aguardando o outro computador")
         self.connection_epoch+=1;epoch=self.connection_epoch
         with self.frame_lock:self.latest_frame=None
@@ -476,7 +577,9 @@ class MainWindow(DeskShell,QMainWindow):
                 self.emit_event('connect_stage',{'text':'Estabelecendo a conexão segura com o computador remoto.','stage':'connecting','epoch':epoch})
                 from .network_config import refresh_profile
                 resolved=refresh_profile(resolved,endpoint)
-                peer=join(resolved,current_event,self.request,on_channel=remember,identity=self.identity)
+                options=dict(on_channel=remember,identity=self.identity)
+                if force_relay:options['force_relay']=True
+                peer=join(resolved,current_event,self.request,**options)
                 peer.connection_profile=resolved if resolved.startswith('NAU1-') else ''
                 peer.address_lookup=lookup
                 peer.ui_epoch=epoch
@@ -570,7 +673,10 @@ class MainWindow(DeskShell,QMainWindow):
             self.control_hint.setText('Controle ativo. Clique na imagem remota para usar mouse e teclado.' if self.canvas.allow_control else 'Somente visualização. Marque Mouse e teclado.' if self.peer.permissions.get('control') else 'O computador remoto ainda precisa autorizar mouse e teclado em Nova conexão.')
         elif self.peer:self.control_hint.setText('Você está compartilhando. As permissões podem ser retiradas em Nova conexão.')
         if not self.canvas.allow_control:self.send_input(dict(event="release"))
-        self.canvas.update()
+        self.canvas.update_remote_cursor();self.canvas.update()
+
+    def release_viewer_gate(self):
+        if self._viewer_gate_held:self._viewer_gate_held=False;self.session_gate.release()
     def send_input(self,data):
         if self.peer and self.peer.role=="viewer" and self.peer.permissions.get("control"):
             if self.control.isChecked() or data.get("event")=="release":self.peer.send(dict(type="input",**data))
@@ -580,8 +686,27 @@ class MainWindow(DeskShell,QMainWindow):
         if text:self.peer.send(dict(type="chat",text=text));self.chat.appendPlainText("Você: "+text);self.message.clear()
     def send_file(self):
         if not self.peer:self.notice("Conecte os computadores para enviar arquivos.");return
-        path,_=QFileDialog.getOpenFileName(self.fullscreen_window or self,"Escolher arquivo para enviar")
-        if path:self.peer.send_file(Path(path))
+        peer=self.peer
+        paths,_=QFileDialog.getOpenFileNames(self.fullscreen_window or self,"Escolher arquivos para enviar · até 250 MB por arquivo")
+        if paths and self.peer is peer and not peer.closed.is_set():self.send_paths(paths)
+
+    def send_paths(self,paths):
+        if not self.peer:self.activity.setText('Conecte ao outro computador antes de enviar arquivos.');return
+        try:
+            paths=list(dict.fromkeys(Path(path) for path in paths))
+            if not paths:return
+            for path in paths:
+                if not path.is_file() and not path.is_dir():raise ValueError('Arquivo ou pasta indisponível: '+path.name)
+                if path.is_file() and path.stat().st_size>250*1024*1024:raise ValueError('O limite é 250 MB por arquivo: '+path.name)
+            self.peer.queue_files(paths);self.open_session_panel(1)
+            self.activity.setText(f'{len(paths)} item(ns) na fila de envio. A outra ponta escolhe onde salvar.')
+        except (ValueError,OSError,ConnectionError) as ex:self.notice(str(ex))
+
+    def paste_files(self):
+        from .collaboration_ui import local_file_paths
+        paths=local_file_paths(QApplication.clipboard().mimeData())
+        if paths:self.send_paths(paths)
+        else:self.activity.setText('Copie arquivos no Explorador de Arquivos e clique em Colar arquivos para enviá-los.')
     def send_clipboard(self,quiet=False):
         if not self.peer or not self.peer.permissions.get("clipboard"):
             if not quiet:self.notice("A pessoa que compartilha precisa permitir a troca de texto copiado.")
@@ -626,9 +751,17 @@ class MainWindow(DeskShell,QMainWindow):
                 self.show_fixed_address()
                 if data.get('text'):self.activity.setText(data['text'])
         elif name=="frame":self.canvas.set_frame(data)
+        elif name=='cursor':self.canvas.update_remote_cursor(data['shape'])
         elif name=='permanent_profile':
             self.available_profile=data['profile'];self.saved_profile.setPlainText(data['profile']);self.saved_name.setText(data['name'])
-            self.activity.setText('O computador autorizou a reconexão. Clique em Salvar este computador para escolher nome e senha local.')
+            from .saved_connections import remember_authorized
+            try:
+                address=self._desk_last_remote if not self._desk_last_remote.startswith(('NA1-','NAU1-')) else ''
+                saved=remember_authorized(self.identity,data['name'],data['profile'],address,self.view_preferences())
+                if saved:self.active_saved_id=saved
+                self.reconnect_profile=data['profile'];self.last_connection_profile=data['profile'];self.refresh_saved()
+                self.activity.setText('Conexão salva. Este dispositivo foi autorizado a reconectar sem novo aceite.')
+            except Exception as ex:self.activity.setText('Acesso autorizado recebido; não foi possível salvar: '+str(ex)[:100])
         elif name in ('relay_wait','relay_ready'):
             self.status.setText('Preparando conexão' if name=='relay_wait' else 'Serviço pronto • aguardando sessão');self.activity.setText(data['text'])
         elif name=="connected":
@@ -648,6 +781,18 @@ class MainWindow(DeskShell,QMainWindow):
             if self.canvas.allow_control:self.canvas.setFocus()
             if self.peer.role=="viewer":self.change_view()
             if self.peer.role=="host":self.pause_changed()
+            if self.peer.role=='viewer':
+                lookup=getattr(self.peer,'address_lookup',None)
+                if lookup:
+                    from .saved_connections import save_address,authorized_for_address
+                    if not authorized_for_address(self.identity,lookup['code']):
+                        self.active_saved_id=save_address(self.identity,'PC '+lookup['code'],lookup['code'],self.view_preferences());self.refresh_saved()
+            if self.peer.role=='host' and self._remember_approved_public:
+                public=self._remember_approved_public;self._remember_approved_public=None
+                if public==getattr(self.peer,'device_public',None):
+                    self.identity.trust(public,'Desk '+public[:12]);self.identity.configure(unattended=True)
+                    self.unattended.blockSignals(True);self.unattended.setChecked(True);self.unattended.blockSignals(False)
+                    self.refresh_trusted();self.start_persistent()
             self.chat.appendPlainText("Sessão aprovada. Arquivos exigem escolha local do destino.")
         elif name=="permissions":self.apply_permissions()
         elif name=="clipboard":
@@ -667,12 +812,14 @@ class MainWindow(DeskShell,QMainWindow):
                 self.make_invite.setEnabled(True);self.invite.clear();self.show_fixed_address()
                 if self.numeric_invite:self.numeric_invite.stop();self.numeric_invite=None
         elif name=="connect_error":
+            self.release_viewer_gate()
             self.pending_channel=None;self.connecting=False;self.connect_button.setEnabled(True);self.status.setText("Não foi possível conectar")
             if data.get('retryable',False) and self.reconnect_profile and self.auto_reconnect.isChecked() and not self.manual_disconnect:
                 self.activity.setText(data['text']);self.schedule_reconnect()
             else:
                 self.retry_timer.stop();self.manual_disconnect=True;self.activity.setText(data['text'])
         elif name=="disconnected":
+            self.release_viewer_gate()
             self.exit_fullscreen()
             with self.frame_lock:self.latest_frame=None
             self.tray.setToolTip('Desk • acesso permanente' if self.persistent else 'Desk')
@@ -683,6 +830,9 @@ class MainWindow(DeskShell,QMainWindow):
         self.statusBar().showMessage(self.status.text())
     def notice(self,text):self.activity.setText(text);QMessageBox.information(self,"Desk",text)
     def disconnect(self):
+        if hasattr(self,'record_source'):
+            if self.record_source=='remote':self.stop_recording()
+            self.cancel_remote_restart();self.clear_annotations();self.annotation_mode_finished(False)
         self.manual_disconnect=True;self.retry_timer.stop();self.reconnect_profile='';self.active_saved_id=None;self.next_saved_id=None
         self.exit_fullscreen()
         with self.frame_lock:self.latest_frame=None
@@ -691,7 +841,8 @@ class MainWindow(DeskShell,QMainWindow):
         if self.peer:
             peer=self.peer
             peer.send(dict(type="bye"));peer.close();peer.wait_for_workers()
-        self.peer=None;self.canvas.image=None;self.canvas.allow_control=False;self.canvas.update()
+        self.peer=None;self.release_viewer_gate();self._remember_approved_public=None
+        self.canvas.image=None;self.canvas.allow_control=False;self.canvas.update_remote_cursor('arrow');self.canvas.update()
         self.transfer_panel.interrupt_pending()
         self.stop_sharing();self.control.setChecked(False);self.control_authorized=False;self.status.setText('Acesso permanente disponível' if self.persistent else 'Desconectado')
         if not self.closing:
@@ -701,30 +852,51 @@ class MainWindow(DeskShell,QMainWindow):
     def fullscreen(self):
         if self._fullscreen:self.exit_fullscreen();return
         self._fullscreen=True;self._split_sizes=self.session_split.sizes()
-        dialog=QDialog(self,Qt.WindowType.Window);dialog.setWindowTitle('Tela remota — Esc para voltar')
+        from .fullscreen import RemoteFullscreenWindow
+        dialog=RemoteFullscreenWindow(self);dialog.setWindowTitle('Tela remota — Esc para voltar')
+        self._fullscreen_display=self.canvas.display_mode
+        self._fullscreen_scroll=(self.viewer.frameShape(),self.viewer.horizontalScrollBarPolicy(),self.viewer.verticalScrollBarPolicy())
+        self.viewer.setFrameShape(QFrame.Shape.NoFrame)
+        self.viewer.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);self.viewer.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.canvas.display_mode='fit';self.canvas.setMinimumSize(1,1);self.viewer.setWidgetResizable(True)
         layout=QVBoxLayout(dialog);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0);layout.addWidget(self.viewer)
-        self.fullscreen_window=dialog;dialog.rejected.connect(self.exit_fullscreen)
+        self.fullscreen_window=dialog
         self.fullscreen_escape=QShortcut(QKeySequence('Escape'),dialog);self.fullscreen_escape.activated.connect(self.canvas.escape_fullscreen)
-        dialog.showFullScreen();self.canvas.setFocus();self.fullscreen_tools.reveal()
+        screen=self.screen()
+        if screen:dialog.setGeometry(screen.geometry())
+        dialog.showFullScreen();dialog.raise_();dialog.activateWindow();self.canvas.setFocus();self.fullscreen_tools.reveal()
 
     def exit_fullscreen(self):
         if not self._fullscreen:return
         self._fullscreen=False;dialog=self.fullscreen_window;self.fullscreen_window=None
         self.fullscreen_tools.timeout.stop();self.fullscreen_tools.hide()
         self.session_split.insertWidget(0,self.viewer);self.session_split.setSizes(self._split_sizes)
+        frame,horizontal,vertical=self._fullscreen_scroll;self.viewer.setFrameShape(frame)
+        self.viewer.setHorizontalScrollBarPolicy(horizontal);self.viewer.setVerticalScrollBarPolicy(vertical)
+        self.canvas.display_mode=self._fullscreen_display;self.viewer.setWidgetResizable(self._fullscreen_display!='original')
+        if self._fullscreen_display=='original' and self.canvas.image:self.canvas.setMinimumSize(self.canvas.image.size());self.canvas.resize(self.canvas.image.size())
+        else:self.canvas.setMinimumSize(420,280)
         if dialog:dialog.hide();dialog.deleteLater()
         self.tabs.setCurrentIndex(1);self.canvas.setFocus()
     def closeEvent(self,event):
+        self.shutdown_advanced()
         if not self.persistent or self.force_exit:self.address_timer.stop()
         if self.persistent and not self.force_exit:
             self.hide();self.tray.show();event.ignore();return
         self.closing=True
+        self.updates.stop()
         for prompt in self.prompts:prompt.cancelled=True;prompt.answer=None;prompt.done.set()
         self.disconnect()
         if self.persistent:self.persistent.stop();self.persistent=None
         self.tray.hide();event.accept()
     def quit_application(self):
         self.force_exit=True;self.close();QApplication.quit()
+
+    def nativeEvent(self,event_type,message):
+        from .window_chrome import frame_hit_test
+        result=frame_hit_test(self,message)
+        if result is not None:return True,result
+        return super().nativeEvent(event_type,message)
 
 
 
@@ -737,8 +909,19 @@ def main():
     parser.add_argument('--numeric-test',action='store_true')
     parser.add_argument('--hardware-test',action='store_true')
     parser.add_argument('--fixed-address-test',action='store_true')
+    parser.add_argument('--advanced-test',action='store_true');parser.add_argument('--advanced-relay-test',action='store_true')
     args=parser.parse_args()
     if args.version:print(__version__);return 0
+    if args.advanced_test or args.advanced_relay_test:
+        from .advanced_diagnostics import advanced_test
+        relay=None
+        if args.advanced_relay_test:
+            from .relay import validate_endpoint
+            config=(Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[2])/'internet.json'
+            cloud=json.loads(config.read_text(encoding='utf-8'));relay=validate_endpoint(dict(mode='metered',api_key=cloud['public_key'],ice_servers=cloud['ice_servers'],relay_only=True))
+        result=advanced_test(relay)
+        if args.result:Path(args.result).write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
+        return 0 if result['passed'] else 1
     if args.fixed_address_test:
         from .fixed_address_diagnostics import fixed_address_test
         config=(Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[2])/'internet.json'
@@ -774,7 +957,13 @@ def main():
         import comtypes
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app=QApplication(sys.argv[:1]);app.setApplicationName("Desk");app.setOrganizationName("Desk");app.setStyleSheet(STYLE)
+    from .single_instance import SingleInstance
+    instance=SingleInstance()
+    if not instance.acquire(background=args.background):return 0
     window=MainWindow()
+    def restore_existing():
+        window.showNormal();window.raise_();window.activateWindow()
+    instance.callback=restore_existing
     if args.background and window.identity.settings().get('unattended'):window.hide()
     else:window.show()
     QTimer.singleShot(0,window.style_native_titlebar)
@@ -811,6 +1000,6 @@ def main():
             if args.screenshot:window.grab().save(args.screenshot)
             window.close();app.quit()
         QTimer.singleShot(700,finish)
-    return app.exec()
+    result=app.exec();instance.close();return result
 
 if __name__=="__main__":raise SystemExit(main())

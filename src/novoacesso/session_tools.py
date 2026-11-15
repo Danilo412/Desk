@@ -55,6 +55,10 @@ class SessionTools:
             except (AttributeError,OSError):result['Proteção']='Não informado'
             outer=getattr(sock,'outer',None)
             result['Conexão']=str(getattr(outer,'route_info','Rota não informada'))[:160] if outer is not None else 'Conexão direta'
+            pairs=getattr(outer,'candidate_types',[]) if outer is not None else []
+            if pairs and all(a in ('host','srflx','prflx','relay') and b in ('host','srflx','prflx','relay') for a,b in pairs):result['Rota ICE']=' / '.join(a+' → '+b for a,b in pairs)
+            received=getattr(peer,'receive_metrics',{})
+            if received:result['Fluxo recebido']=f"{received.get('received_fps',0):.1f} FPS · {received.get('received_kbps',0)/1000:.2f} Mbit/s · decodificação {received.get('decode_ms',0):.1f} ms"
         if getattr(peer,'role','')=='viewer':
             result['Estado']='Controle ativo' if self.canvas.allow_control else 'Somente visualização'
             if self.canvas.image is not None:result['Tela recebida']=f'{self.canvas.image.width()} × {self.canvas.image.height()}'

@@ -52,6 +52,25 @@ def test_single_video_encoder_and_exact_static_restore(size):
 def test_video_dimensions_bounded_before_encoding():
     with pytest.raises(ProtocolError):ScreenPipeline().encode(Image.new('RGB',(2561,1)),mode='vp8')
 
+def test_embedded_motion_uses_video_and_static_returns_to_lossless():
+    pipeline=ScreenPipeline();first=Image.new('RGB',(640,360),'white')
+    pipeline.encode(first,now=1)
+    changed=first.copy();changed.paste('navy',(80,80,240,160))
+    kind,packet,_=pipeline.encode(changed,now=2)
+    assert kind==b'W' and VideoDecoder().decode(packet).size==changed.size
+    kind,packet,_=pipeline.encode(changed,now=3)
+    assert kind==b'V' and ScreenDecoder().decode(packet).tobytes()==changed.tobytes()
+    assert ScreenPipeline().encode(changed,mode='deflate',now=4)[0]==b'V'
+
+def test_high_latency_route_does_not_hide_additional_video_queue():
+    q=AdaptiveQuality()
+    for _ in range(30):q.feedback(delay_ms=1200,rtt_ms=700)
+    fps,factor=q.observe(30,5,0,now=1)
+    assert fps<30 and factor<1
+    healthy=AdaptiveQuality()
+    for _ in range(30):healthy.feedback(delay_ms=750,rtt_ms=700)
+    assert healthy.observe(30,5,0,now=1)==(30,1.)
+
 def test_original_and_stretch_are_separate_from_stream_resolution():
     from novoacesso.app import MainWindow
     from PySide6.QtTest import QTest

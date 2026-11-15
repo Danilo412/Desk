@@ -14,7 +14,10 @@ class AdaptiveQuality:
             self.encode_ms=.8*self.encode_ms+.2*encode_ms
             if self.target_fps>requested:self.target_fps=requested
             if now-self.updated>=1:
-                overloaded=backlog>=2 or self.delay_ms>max(220,self.rtt_ms*3+100) or self.encode_ms>1000/max(1,self.target_fps)*.9
+                # O ACK do quadro já inclui a ida e volta. Uma rota distante
+                # não deve permitir vários segundos adicionais de fila.
+                queued_delay=self.delay_ms-self.rtt_ms
+                overloaded=backlog>=2 or (self.delay_ms>350 and queued_delay>250) or self.encode_ms>1000/max(1,self.target_fps)*.9
                 if overloaded:
                     self.target_fps=max(8,min(requested,int(self.target_fps*.8)));self.factor=max(.35,self.factor*.85);self.healthy=0
                 else:

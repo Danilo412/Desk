@@ -2,7 +2,7 @@
 
 ## Estado atual
 
-A candidatura do Desk à SignPath Foundation foi enviada em **14 de novembro de 2026**. O formulário confirmou o recebimento; a análise está pendente. O projeto ainda não foi aprovado e não possui certificado fornecido por ela. Releases atuais são identificadas como **unsigned / sem assinatura**. Nenhum arquivo deve ser apresentado como assinado antes de uma assinatura válida ser verificada.
+A candidatura do Desk à SignPath Foundation foi recusada em **14 de novembro de 2026**. O projeto não possui certificado fornecido por ela. Releases atuais são identificadas como **unsigned / sem assinatura Authenticode**. Nenhum arquivo deve ser apresentado como assinado pelo Windows antes de uma assinatura válida ser verificada.
 
 ## Responsabilidades
 
@@ -23,3 +23,6 @@ Se o projeto for aceito e passar efetivamente a usar o programa, os créditos ex
 ## Privacidade
 
 Veja [PRIVACY.md](PRIVACY.md). O aplicativo não incorpora credenciais de terceiros nas releases públicas. A configuração particular preparada para uso pessoal não será publicada como artefato deste repositório.
+
+
+Atualização de 15/11/2026: a candidatura à SignPath Foundation foi recusada em 14/11/2026. Não existe certificado Authenticode concedido. A chave de manifesto do atualizador é independente e não substitui uma assinatura de código reconhecida pelo Windows.

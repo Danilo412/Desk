@@ -1,7 +1,27 @@
 """Session-only chat timestamps and truthful local transfer activity."""
 import time
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QListWidget,QListWidgetItem,QPushButton,QProgressBar,QPlainTextEdit
+from PySide6.QtCore import Qt,Signal
+from PySide6.QtWidgets import QWidget,QFrame,QVBoxLayout,QHBoxLayout,QLabel,QListWidget,QListWidgetItem,QPushButton,QProgressBar,QPlainTextEdit
+
+def local_file_paths(mime):
+    urls=mime.urls() if mime.hasUrls() else []
+    if not 1<=len(urls)<=32 or any(not url.isLocalFile() for url in urls):return []
+    return list(dict.fromkeys(url.toLocalFile() for url in urls))
+
+class FileDropArea(QFrame):
+    files_dropped=Signal(list)
+    def __init__(self):
+        super().__init__();self.setAcceptDrops(True);self.setObjectName('fileDropArea')
+        col=QVBoxLayout(self);label=QLabel('Arraste arquivos ou pastas aqui\nou escolha o que deseja enviar.');label.setWordWrap(True);label.setAlignment(Qt.AlignmentFlag.AlignCenter);col.addWidget(label)
+        self.setAccessibleName('Soltar arquivos ou pastas para enviar');self.setMinimumHeight(76)
+        self.setStyleSheet('QFrame#fileDropArea{border:1px dashed #777;border-radius:5px;background:#282828;} QFrame#fileDropArea QLabel{border:0;background:transparent;color:#bbb;}')
+    def dragEnterEvent(self,event):
+        if self.isEnabled() and local_file_paths(event.mimeData()):event.acceptProposedAction()
+        else:event.ignore()
+    def dropEvent(self,event):
+        paths=local_file_paths(event.mimeData())
+        if self.isEnabled() and paths:self.files_dropped.emit(paths);event.acceptProposedAction()
+        else:event.ignore()
 
 class SessionChat(QPlainTextEdit):
     def appendPlainText(self,text):
@@ -74,7 +94,7 @@ class CollaborationTools:
     def refresh_chat_badge(self):
         value=getattr(self,'_unread_chat',0);suffix='99+' if value>99 else str(value)
         self.session_side.setTabText(0,'Conversa'+(' ('+suffix+')' if value else ''))
-        self.session_sidebar_button.setText('Conversa ('+suffix+')' if value else 'Conversa e ferramentas')
+        self.session_sidebar_button.setText('Conversa ('+suffix+')' if value else 'Conversa')
 
     def on_collaboration_event(self,name,data):
         if name=='chat':

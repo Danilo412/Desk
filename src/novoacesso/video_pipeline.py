@@ -19,7 +19,10 @@ class ScreenPipeline:
         small=np.asarray(image.resize((80,45)).convert('RGB'),dtype=np.int16)
         fraction=0. if self.previous is None else float(np.mean(np.max(np.abs(small-self.previous),axis=2)>18))
         self.previous=small
-        if fraction>.12:self.moving_until=now+.6
+        # Um vídeo incorporado pode movimentar apenas uma pequena região da
+        # área de trabalho. Esperar 12% deixava esse caso preso em DEFLATE,
+        # acumulando megabytes no relay antes de reduzir a carga.
+        if fraction>.035:self.moving_until=now+.6
         video=mode=='vp8' or (mode=='auto' and now<self.moving_until)
         self.seq=(self.seq+1)&0xffffffff;self.frames+=1
         if not video:

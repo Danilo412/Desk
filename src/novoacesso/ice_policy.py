@@ -9,7 +9,7 @@ async def gather_component(connection,component,addresses,timeout=5):
     import aioice.ice as ice
     from aioice import turn
     candidates=[];hosts=[];queries={};pending=set()
-    loop=asyncio.get_running_loop();stun_ready=connection.stun_server is None;turn_success=False
+    loop=asyncio.get_running_loop();stun_ready=connection.stun_server is None;turn_success=False;udp_success=False
     for address in addresses:
         try:
             transport,protocol=await loop.create_datagram_endpoint(lambda:ice.StunProtocol(connection),local_addr=(address,0))
@@ -22,23 +22,31 @@ async def gather_component(connection,component,addresses,timeout=5):
     if connection.stun_server:
         for protocol in hosts:
             if ipaddress.ip_address(protocol.local_candidate.host).version==4:
-                queries[asyncio.create_task(ice.server_reflexive_candidate(protocol,connection.stun_server))]='stun'
+                queries[asyncio.create_task(ice.server_reflexive_candidate(protocol,connection.stun_server))]=('stun',None)
     options=getattr(connection,'_novo_turn_options',None)
     if options is None:
         options=[dict(turn_server=connection.turn_server,turn_username=connection.turn_username,turn_password=connection.turn_password,turn_ssl=connection.turn_ssl,turn_transport=connection.turn_transport)] if connection.turn_server else []
     for option in options:
-        task=asyncio.create_task(ice.relayed_candidate(component=component,protocol_factory=lambda:ice.StunProtocol(connection),**option));queries[task]='turn'
+        task=asyncio.create_task(ice.relayed_candidate(component=component,protocol_factory=lambda:ice.StunProtocol(connection),**option));queries[task]=('turn',option.get('turn_transport','udp'))
     pending=set(queries);deadline=loop.time()+timeout
     try:
         while pending and loop.time()<deadline:
             done,pending=await asyncio.wait(pending,timeout=max(0,deadline-loop.time()),return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 if task.cancelled() or task.exception() is not None:continue
-                candidate,protocol=task.result();candidates.append(candidate)
+                candidate,protocol=task.result()
+                if queries[task]==('turn','tcp'):candidate.priority-=1
+                candidates.append(candidate)
                 if protocol is not None:connection._protocols.append(protocol)
                 if candidate.type=='srflx':stun_ready=True
-                if candidate.type=='relay':turn_success=True
-            turn_done=turn_success or not any(queries[task]=='turn' for task in pending)
+                if candidate.type=='relay':
+                    turn_success=True
+                    if queries[task]==('turn','udp'):udp_success=True
+            udp_pending=any(queries[task]==('turn','udp') for task in pending)
+            # Um TCP que respondeu primeiro não deve cancelar imediatamente
+            # a alocação UDP. A preferência custa no máximo 250 ms extras.
+            if turn_success and not udp_success and udp_pending:deadline=min(deadline,loop.time()+.25)
+            turn_done=(turn_success and (udp_success or not udp_pending)) or not any(queries[task][0]=='turn' for task in pending)
             if stun_ready and turn_done:break
     finally:
         for task in pending:task.cancel()
@@ -70,6 +78,18 @@ class RelayOnlyPeerConnection(ResponsivePeerConnection):
         dtls=super()._RTCPeerConnection__createDtlsTransport()
         connection=dtls.transport._connection
         original=connection.get_component_candidates
+        original_add=connection.add_remote_candidate;original_request=connection.request_received
+        async def add_remote(candidate):
+            if candidate is not None and candidate.type!='relay':return
+            await original_add(candidate)
+        def request_received(message,addr,protocol,raw_data):
+            # A normal peer may still advertise host candidates and initiate
+            # peer-reflexive checks. Accept only its advertised TURN endpoint,
+            # before sending a STUN response or learning a new direct pair.
+            if protocol.local_candidate.type!='relay':return
+            if not any(c.type=='relay' and c.host==addr[0] and c.port==addr[1] for c in connection.remote_candidates):return
+            return original_request(message,addr,protocol,raw_data)
+        connection.add_remote_candidate=add_remote;connection.request_received=request_received
         retired=[];original_close=connection.close
         async def close():
             try:await original_close()

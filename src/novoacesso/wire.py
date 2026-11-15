@@ -223,7 +223,7 @@ class Channel:
             except OSError:pass
             self.sock.close()
 
-def connect_invitation(token,timeout=12):
+def connect_invitation(token,timeout=12,force_relay=False):
     data=parse_invitation(token)
     from .relay import peer_client_socket
-    return Channel(peer_client_socket(data)),data
+    return Channel(peer_client_socket(data,force_relay=True) if force_relay else peer_client_socket(data)),data

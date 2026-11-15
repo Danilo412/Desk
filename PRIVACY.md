@@ -18,6 +18,13 @@ Quem instala deve consultar os termos e políticas do provedor que escolher, em 
 
 ## Dados locais
 
+A partir da versão 0.12.0, a instalação consulta versões públicas no GitHub
+ao abrir e a cada seis horas. O GitHub pode observar o endereço IP e horário
+dessas consultas. Não são enviados o número Desk, favoritos, convites,
+credenciais de relay ou conteúdo da sessão. O instalador é baixado somente
+após escolha local; a instalação exige uma segunda confirmação. A assinatura
+do manifesto não substitui a assinatura de código do Windows.
+
 A identidade, chaves, autorizações, favoritos, preferências e referências a sessões recentes são armazenados no perfil Windows, normalmente em `%LOCALAPPDATA%\NovoAcesso`. O arquivo de identidade usa proteção DPAPI no Windows. O histórico recente não guarda o conteúdo completo dos convites. Os dados de identidade ficam separados da instalação para preservar o número nas atualizações/reinstalações; desinstalar o programa não os apaga automaticamente.
 
 Credenciais de configuração podem existir em `internet.json` junto ao programa e nas configurações locais protegidas. Não compartilhe esses arquivos ou o arquivo de identidade. A edição pública não contém o login de nenhuma conta ou uma identidade pré-autorizada.

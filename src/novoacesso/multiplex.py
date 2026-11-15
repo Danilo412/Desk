@@ -26,6 +26,15 @@ class Outgoing:
         kind=record[:1];payload=record[5:];lane=lane_for(kind,payload);deadline=time.monotonic()+timeout
         with self.condition:
             if self.closed:raise ConnectionError('Conexão encerrada.')
+            # Substitui somente movimentos consecutivos ainda não enviados.
+            # Botões, teclas e liberações continuam ordenados e nunca somem.
+            if lane==0 and self.queues[0]:
+                try:
+                    previous=self.queues[0][-1]
+                    current=json.loads(payload);old=json.loads(previous[2])
+                    if current.get('type')==old.get('type')=='input' and current.get('event')==old.get('event')=='move':
+                        self.queues[0][-1]=(previous[0],kind,payload);return
+                except (ValueError,TypeError,AttributeError):pass
             while len(self.queues[lane])+int(self.active[lane] is not None)>=LIMITS[lane]:
                 if self.closed:raise ConnectionError('Conexão encerrada.')
                 remaining=deadline-time.monotonic()

@@ -26,15 +26,23 @@ class Peer:
         self.quality=AdaptiveQuality();self.video_decoder=VideoDecoder();self.sent_frames={};self.feedback_lock=threading.Lock();self.pings={}
         self.transfer_lock=threading.RLock();self.audio_queue=queue.Queue(maxsize=4);self.file_offers_pending=0
         self.audio_capture_running=False;self.audio_capture_attempted=False;self.audio_playback_running=False;self.workers=[]
+        from .remote_features import RemoteFeatures
+        self.remote_capabilities=set();self.features=RemoteFeatures(self);self.recording_audio_sink=None
+        self.receive_metrics={}
+        self.file_send_queue=queue.Queue(maxsize=32);self.file_sender_running=False
 
     def spawn(self,fn):
-        thread=threading.Thread(target=fn,daemon=True);self.workers.append(thread);thread.start()
+        thread=threading.Thread(target=fn,daemon=True);self.workers.append(thread);thread.start();return thread
 
     def start(self):
         self.channel.start_io()
         if self.channel.closed.is_set():raise ConnectionError('A conexão foi encerrada antes de iniciar a sessão.')
         self.spawn(self._receive);self.spawn(self._heartbeat)
-        if self.role=="host":self.spawn(self._capture)
+        if self.role=="host":
+            self.spawn(self._capture)
+            if callable(getattr(self.backend,'cursor',None)):self.spawn(self._cursor_updates)
+        from .remote_features import CAPABILITIES
+        if getattr(self.channel,'version',1)>=2:self.send(dict(type='capabilities',values=sorted(CAPABILITIES)))
         self.event("connected",dict(role=self.role,permissions=self.permissions,monitors=self.monitors))
 
     def send(self,data):
@@ -46,14 +54,24 @@ class Peer:
         old=self.permissions.copy();self.permissions.update(permissions)
         if not self.permissions.get("audio") or not old.get("audio"):self.audio_capture_attempted=False
         if old.get("control") and not self.permissions.get("control") and self.backend:self.backend.release()
+        if old.get('control') and not self.permissions.get('control'):self.features.revoke()
         self.send(dict(type="permissions",values=self.permissions))
 
     def _heartbeat(self):
         while not self.closed.wait(4):
+            self.features.expire()
             nonce=secrets.token_hex(8)
             with self.feedback_lock:
                 self.pings={nonce:time.monotonic()}
             self.send(dict(type="ping",nonce=nonce))
+
+    def _cursor_updates(self):
+        last=None
+        while not self.closed.wait(.08):
+            try:shape=self.backend.cursor()
+            except Exception:return
+            if shape!=last:
+                last=shape;self.send(dict(type='cursor',shape=shape))
 
     def _capture(self):
         modern=getattr(self.channel,'version',1)>=2
@@ -102,14 +120,22 @@ class Peer:
         except Exception as ex:self.close("Transmissão interrompida: "+str(ex)[:200])
 
     def _receive(self):
+        sample_start=time.monotonic();sample_frames=0;sample_bytes=0;sample_decode=0.
         try:
             while not self.closed.is_set():
                 kind,data=self.channel.receive()
                 if kind==b"J":self._control(data)
                 elif kind in (b"V",b"W"):
                     if self.role!="viewer":raise ProtocolError("Quadro recebido no papel incorreto.")
+                    decode_start=time.monotonic()
                     image=self.decoder.decode(data) if kind==b'V' else self.video_decoder.decode(data)
+                    sample_decode+=time.monotonic()-decode_start;sample_frames+=1;sample_bytes+=len(data)
                     self.event("frame",image)
+                    now=time.monotonic();elapsed=now-sample_start
+                    if elapsed>=1:
+                        self.receive_metrics=dict(received_fps=round(sample_frames/elapsed,1),decode_ms=round(sample_decode*1000/sample_frames,2),received_kbps=round(sample_bytes*8/elapsed/1000,1))
+                        self.event('receive_stats',self.receive_metrics)
+                        sample_start=now;sample_frames=0;sample_bytes=0;sample_decode=0.
                     if self.channel.version>=2:
                         import struct
                         self.send(dict(type='frame_ack',seq=struct.unpack_from('>I',data)[0]))
@@ -121,6 +147,12 @@ class Peer:
 
     def _control(self,msg):
         kind=msg["type"]
+        if kind in ('capabilities','advanced_request','advanced_result','whiteboard_state','annotation'):
+            self.features.handle(msg);return
+        if kind=='cursor':
+            if self.role=='viewer' and msg.get('shape') in ('arrow','ibeam','wait','cross','hand','size_all','size_we','size_ns','size_nwse','size_nesw','forbidden','busy'):
+                self.event('cursor',dict(shape=msg['shape']))
+            return
         if kind=='ping':
             nonce=msg.get('nonce')
             if isinstance(nonce,str) and len(nonce)<=32:self.send(dict(type='pong',nonce=nonce))
@@ -152,6 +184,7 @@ class Peer:
             values=msg.get("values",{})
             if not isinstance(values,dict):raise ProtocolError("Permissões inválidas.")
             self.permissions={k:values.get(k) is True for k in ("control","clipboard","audio")}
+            if not self.permissions.get('control'):self.features.revoke()
             self.event("permissions",self.permissions)
         elif kind=="stats" and self.role=="viewer":
             values=msg.get("values",{})
@@ -165,6 +198,7 @@ class Peer:
             monitor,mode,width,fps=msg.get("monitor"),msg.get("mode"),msg.get("width"),msg.get("fps")
             from .quality import WIDTHS,FPS
             if type(monitor) is int and 0<=monitor<len(self.monitors) and mode in ("auto","deflate","vp8") and width in WIDTHS and type(width) is int and fps in FPS and type(fps) is int:
+                if monitor!=self.monitor and self.features.whiteboard_allowed:self.features.revoke()
                 with self.options_lock:self.monitor,self.mode,self.width,self.fps=monitor,mode,width,fps
         elif kind=="file_offer":
             with self.transfer_lock:
@@ -217,7 +251,39 @@ class Peer:
                 self.event("notice",{"text":"Envio de arquivo: "+str(ex)[:180]})
             finally:
                 with self.transfer_lock:self.pending.pop(transfer,None)
-        self.spawn(worker)
+        return self.spawn(worker)
+
+    def queue_files(self,paths):
+        paths=[Path(path) for path in paths]
+        if not paths:return
+        with self.transfer_lock:
+            if self.closed.is_set():raise ConnectionError('A sessão foi encerrada.')
+            if len(paths)>self.file_send_queue.maxsize-self.file_send_queue.qsize():raise ValueError('Aguarde a fila atual. É possível deixar até 32 arquivos ou pastas na fila.')
+            for path in paths:self.file_send_queue.put_nowait(path)
+            if not self.file_sender_running:
+                self.file_sender_running=True;self.spawn(self._send_queued_files)
+
+    def _send_queued_files(self):
+        while True:
+            with self.transfer_lock:
+                if self.closed.is_set():
+                    while not self.file_send_queue.empty():self.file_send_queue.get_nowait()
+                try:path=self.file_send_queue.get_nowait()
+                except queue.Empty:self.file_sender_running=False;return
+            worker=self.send_folder(path) if path.is_dir() else self.send_file(path)
+            worker.join()
+
+    def send_folder(self,path):
+        def worker():
+            try:
+                from .folders import pack_folder
+                with tempfile.TemporaryDirectory(prefix='desk-folder-send-') as directory:
+                    archive=Path(directory)/(Path(path).name+'.zip')
+                    self.event('notice',dict(text='Preparando a pasta para envio…'))
+                    pack_folder(path,archive,self.closed.is_set)
+                    if not self.closed.is_set():self.send_file(archive).join()
+            except Exception as ex:self.event('notice',dict(text='Envio de pasta: '+str(ex)[:180]))
+        return self.spawn(worker)
 
     def transfer_event(self,id,direction,name,size,done,state):
         self.event('transfer',dict(id=id,direction=direction,name=name,size=size,done=done,state=state))
@@ -261,6 +327,7 @@ class Peer:
             item["temp"].replace(item["destination"])
             self.transfer_event(msg['id'],'receive',item['destination'].name,item['size'],item['received'],'verified')
             self.event("notice",{"text":"Arquivo recebido e conferido: "+item["destination"].name})
+            self.event('file_received',dict(path=str(item['destination']),name=item['destination'].name))
         except Exception:
             self.transfer_event(msg['id'],'receive',item['name'],item['size'],item['received'],'failed');raise
         finally:
@@ -269,6 +336,7 @@ class Peer:
     def close(self,reason="Sessão encerrada."):
         if self.closed.is_set():return
         self.closed.set();self.channel.close()
+        self.features.revoke();self.recording_audio_sink=None
         if self.backend:self.backend.release()
         with self.transfer_lock:
             for id,item in self.transfers.items():
@@ -357,7 +425,9 @@ class HostService:
                 # The same I/O pump owns SSL during approval and during the
                 # session. It detects EOF without a second concurrent SSL reader.
                 self.approval_channel=channel;channel.start_io(handshake=True)
-                accepted=self.request("consent",{"address":address[0],"_cancelled":lambda current=channel:current.closed.is_set() or self.closed.is_set()},60)
+                public=msg.get('device_public')
+                if not isinstance(public,str) or len(public)!=64 or any(c not in '0123456789abcdef' for c in public):public=None
+                accepted=self.request("consent",{"address":address[0],"device_public":public,"_cancelled":lambda current=channel:current.closed.is_set() or self.closed.is_set()},60)
                 self.approval_channel=None
                 if channel.closed.is_set() or self.closed.is_set():raise ConnectionAbortedError('O outro computador encerrou a solicitação antes do aceite.')
                 if not accepted or self.closed.is_set():raise ProtocolError("A solicitação não foi aprovada.")
@@ -395,12 +465,12 @@ class HostService:
             except OSError:pass
         if self.peer:self.peer.close();self.peer.wait_for_workers()
 
-def join(token,event,request,on_channel=None,identity=None):
+def join(token,event,request,on_channel=None,identity=None,force_relay=False):
     if token.strip().startswith('NAU1-'):
         from .unattended import join_trusted
         if identity is None:raise ProtocolError('Identidade local necessária para acesso permanente.')
-        return join_trusted(token,identity,event,request,on_channel)
-    channel,data=connect_invitation(token)
+        return join_trusted(token,identity,event,request,on_channel,force_relay=True) if force_relay else join_trusted(token,identity,event,request,on_channel)
+    channel,data=connect_invitation(token,force_relay=True) if force_relay else connect_invitation(token)
     try:
         if on_channel:on_channel(channel)
         channel.control(dict(type="hello",min=1,max=2,secret=data["secret"],device_public=identity.public if identity else None))

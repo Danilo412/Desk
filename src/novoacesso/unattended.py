@@ -78,8 +78,8 @@ class TrustedHost(HostService):
                 self.closed.wait(.25 if channel else 2)
         if self.listener:self.listener.close()
 
-def join_trusted(token,identity,event,request,on_channel=None):
-    profile=parse_profile(token);channel=Channel(peer_client_socket(profile))
+def join_trusted(token,identity,event,request,on_channel=None,force_relay=False):
+    profile=parse_profile(token);channel=Channel(peer_client_socket(profile,force_relay=True) if force_relay else peer_client_socket(profile))
     try:
         if on_channel:on_channel(channel)
         channel.control(dict(type='trusted_hello',public=identity.public,max=2))

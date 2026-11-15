@@ -22,7 +22,7 @@ def test_loopback_capture_encodes_pcm_and_never_falls_back_to_mic(monkeypatch):
     class Recorder:
         def __enter__(self):return self
         def __exit__(self,*args):pass
-        def record(self,**kwargs):closed.set();return np.zeros((FRAMES,CHANNELS),np.float32)
+        def record(self,**kwargs):return np.zeros((FRAMES,CHANNELS),np.float32)
     class Loopback:
         isloopback=True
         def recorder(self,**kwargs):calls.append(kwargs);return Recorder()
@@ -31,8 +31,9 @@ def test_loopback_capture_encodes_pcm_and_never_falls_back_to_mic(monkeypatch):
         return Loopback()
     fake=SimpleNamespace(default_speaker=lambda:SimpleNamespace(id='test-output'),get_microphone=get_microphone)
     monkeypatch.setitem(sys.modules,'soundcard',fake)
+    def send(kind,data):packets.append((kind,data));closed.set()
     peer=SimpleNamespace(closed=closed,permissions={'audio':True},audio_capture_running=True,
-        channel=SimpleNamespace(send=lambda kind,data:packets.append((kind,data))),event=lambda *a:None)
+        channel=SimpleNamespace(send=send),event=lambda *a:None)
     capture_loop(peer)
     assert calls[0]['samplerate']==RATE and calls[0]['channels']==2
     assert packets[0][0]==b'A' and bounded_inflate(packets[0][1],FRAMES*CHANNELS*2)==b'\0'*(FRAMES*CHANNELS*2)
