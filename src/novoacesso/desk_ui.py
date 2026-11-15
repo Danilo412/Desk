@@ -344,6 +344,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         connection.addWidget(hint('Use para testar redes que exigem retransmissão. Se o TURN não estiver disponível, a conexão falha; não volta silenciosamente para a rota direta. Desmarque para permitir a escolha automática da rota.'))
         self.relay_test_button=action_button('Testar conexão com o relay',self.test_relay);connection.addWidget(self.relay_test_button,0,Qt.AlignmentFlag.AlignLeft)
         self.relay_test_status=hint('');connection.addWidget(self.relay_test_status)
+        connection.addWidget(action_button('Importar configuração de conexão…',self.import_network_configuration),0,Qt.AlignmentFlag.AlignLeft)
         advanced=QToolButton();advanced.setText('Configuração avançada');advanced.setCheckable(True);advanced.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         advanced.setArrowType(Qt.ArrowType.RightArrow);connection.addWidget(advanced,0,Qt.AlignmentFlag.AlignLeft)
         advanced_box=QWidget();advanced_layout=QVBoxLayout(advanced_box);advanced_layout.setContentsMargins(0,0,0,0)
@@ -684,7 +685,8 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
     def prepare_address(self):
         if self.closing or not self._desk_listening_requested or self.peer or self.connecting or self.host:return
         if not self.cloud_signaling_key:
-            self.numeric_code.setPlaceholderText('Conexão direta');self.activity.setText('Configure a internet no menu para receber um endereço numérico.');return
+            self.set_availability('offline');self.address_caption.setText('Seu endereço fixo · configure a internet para ficar disponível')
+            self.activity.setText('Falta a configuração de internet neste computador. Abra Configurações > Conexão e importe a configuração privada do proprietário.');return
         self.start_host()
 
     def show_fixed_address(self):
@@ -787,8 +789,9 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
             self.session_nav.setText('Sessão ativa');self.session_nav.setIcon(QIcon(str(ASSETS/'monitor.svg')))
             if self.peer and self.peer.role=='viewer':
                 label=self._desk_last_remote or 'Computador remoto';label='Computador autorizado' if label.startswith(('NA1-','NAU1-')) else label
-                self._desk_recent.insert(0,dict(label=label,when=time.strftime('%d/%m %H:%M'),saved_id=self.active_saved_id,fixed=bool(getattr(self.peer,'address_lookup',None))))
-                self._desk_recent=self._desk_recent[:20];self.identity.configure(desk_recents=self._desk_recent);self.refresh_recents()
+                from .connection_catalog import remember_recent
+                self._desk_recent=remember_recent(self.identity,dict(label=label,when=time.strftime('%d/%m %H:%M'),saved_id=self.active_saved_id,fixed=bool(getattr(self.peer,'address_lookup',None))))
+                self.refresh_recents()
         elif name in ('host_expired','numeric_expired','disconnected'):
             self.show_fixed_address();self._desk_address_online=False
             self.set_availability('preparing' if self._desk_listening_requested else 'offline')
@@ -800,7 +803,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
             self.show_fixed_address();self._desk_address_online=False
             self.set_availability('preparing' if self._desk_listening_requested else 'offline')
             self.address_caption.setText('Seu endereço fixo · reconectando ao serviço de internet')
-            if self._desk_listening_requested and not self.peer and not self.connecting:self.address_timer.start(5000)
+            if self._desk_listening_requested and not self.peer and not self.connecting:self.address_timer.start(max(5000,min(300000,data.get('retry_ms',15000))))
         elif name in ('host_error','persistent_error'):
             if not self._desk_address_online and not self.peer:self.set_availability('offline')
         elif name in ('stats','receive_stats'):

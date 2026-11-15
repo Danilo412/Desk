@@ -17,6 +17,24 @@ def client_for(key,factory=None):
     from metered_realtime import SignallingClient
     return (factory or SignallingClient)(api_key=key,reconnect=False)
 
+def signalling_error(error):
+    code=getattr(error,'code',None);close=getattr(error,'close_code',None)
+    if close==4010:return 'O serviço atingiu o limite de conexões simultâneas. Aguarde a liberação de uma conexão e tente novamente.'
+    if code=='over_message_quota':return 'A franquia de mensagens do serviço de conexão foi atingida.'
+    if close==4011:return 'Muitas solicitações ao serviço de conexão. Aguarde alguns segundos antes de tentar novamente.'
+    if close in (4001,4003) or code in ('channel_not_authorized','invalid_token','token_expired'):
+        return 'A configuração de internet não autoriza esta rede Desk. Confira se os computadores usam a mesma configuração de conexão.'
+    return 'Não foi possível acessar o serviço de localização. Confira a internet e a configuração de conexão.'
+
+class RequestBudget:
+    """Bound request traffic in a short window, rather than for the host lifetime."""
+    def __init__(self,capacity=20,seconds=10,clock=time.monotonic):
+        self.capacity=capacity;self.seconds=seconds;self.clock=clock;self.served={}
+    def allow(self,peer):
+        now=self.clock();self.served={p:t for p,t in self.served.items() if now-t<self.seconds}
+        if peer in self.served or len(self.served)>=self.capacity:return False
+        self.served[peer]=now;return True
+
 class NumericInvite:
     def __init__(self,token,key,event,client_factory=None,identity=None):
         invitation=parse_invitation(token)
@@ -34,20 +52,19 @@ class NumericInvite:
             except RuntimeError:pass
     def _run(self):
         try:asyncio.run(self._serve())
-        except Exception:
-            if not self.stopped.is_set():self.event('numeric_error',{'id':self.id,'text':'Código numérico indisponível. Você ainda pode copiar o convite completo.'})
+        except Exception as error:
+            if not self.stopped.is_set():self.event('numeric_error',{'id':self.id,'text':signalling_error(error),'retry_ms':60000 if getattr(error,'close_code',None)==4010 else 15000})
     async def _serve(self):
         from metered_realtime import Direct
         room,key=code_material(self.code);client=client_for(self.key,self.factory)
-        self.loop=asyncio.get_running_loop();self.done=asyncio.Event();served=set()
+        self.loop=asyncio.get_running_loop();self.done=asyncio.Event();served=RequestBudget()
         @client.on(Direct)
         async def request(event):
             data=event.data
             if self.stopped.is_set() or time.time()>=self.expires or not isinstance(data,dict) or data.get('kind')!='numeric_request':return
             nonce=data.get('nonce')
             if not isinstance(nonce,str) or len(nonce)!=32 or any(c not in '0123456789abcdef' for c in nonce):return
-            if event.sender_peer_id in served or len(served)>=20:return
-            served.add(event.sender_peer_id)
+            if not served.allow(event.sender_peer_id):return
             iv=secrets.token_bytes(12)
             sealed=iv+AESGCM(key).encrypt(iv,self.token.encode(),(room+nonce).encode())
             offer=dict(kind='numeric_offer',nonce=nonce,sealed=base64.urlsafe_b64encode(sealed).decode())
@@ -100,15 +117,21 @@ async def _resolve(code,api_key,timeout,cancelled,factory,require_signed=False,e
             if require_signed:rejected_identity=True
             return
         future.set_result(dict(token=token,public=public,code=normalize_code(code)))
+    stage='connect'
     try:
         async with asyncio.timeout(timeout):
-            await client.connect();await client.subscribe(room)
+            await client.connect();stage='subscribe';await client.subscribe(room);stage='lookup'
             while not future.done():
                 if cancelled and cancelled():raise ConnectionError('Conexão cancelada.')
                 await asyncio.wait([future],timeout=.1)
             return future.result()
     except TimeoutError as ex:
+        if stage!='lookup':raise ProtocolError(signalling_error(ex)) from ex
         if rejected_identity:raise ProtocolError('A resposta deste endereço não pôde ser verificada. Atualize o Desk nos dois computadores e confira a identidade do dispositivo.') from ex
         if not require_signed:raise ProtocolError('Código não encontrado ou expirado.') from ex
         raise ProtocolError('Dispositivo indisponível. Confira o endereço e mantenha o Desk aberto no outro computador.') from ex
+    except ProtocolError:raise
+    except Exception as error:
+        permanent=getattr(error,'close_code',None) in (4001,4003,4010) or getattr(error,'code',None) in ('channel_not_authorized','invalid_token','token_expired','over_message_quota')
+        raise (ProtocolError if permanent else ConnectionError)(signalling_error(error)) from error
     finally:await client.close()

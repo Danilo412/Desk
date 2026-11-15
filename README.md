@@ -66,3 +66,7 @@ Problemas gerais podem ser relatados em Issues. Não publique convites, credenci
 ## Atualizações
 
 O Desk instalado verifica atualizações ao abrir e a cada cinco minutos. O usuário confirma o download e a abertura do instalador. Uma sessão ou gravação ativa impede a instalação. Consulte [ATUALIZACOES.md](ATUALIZACOES.md).
+
+## Correções 0.12.1
+
+Favoritos e recentes são consolidados por identidade/endereço, mantendo o acesso autorizado e o nome escolhido. A migração guarda uma cópia protegida do perfil e não muda o número fixo. Limites do serviço são diferenciados de dispositivo ausente. A configuração salva do serviço volta a funcionar após reabrir mesmo sem internet.json; instalações novas mostram claramente quando precisam importar a configuração privada. O controle de consultas ao número usa uma janela curta e não um limite para toda a duração do convite. Três endereços sintéticos foram registrados simultaneamente no serviço público e localizados com uma quarta conexão; isso não substitui o teste do PC físico indisponível.

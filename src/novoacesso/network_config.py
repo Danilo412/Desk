@@ -2,6 +2,14 @@
 from urllib.parse import urlsplit
 from .relay import endpoint_from_token,token_encode,validate_endpoint
 
+def read_configuration(path):
+    import json
+    from pathlib import Path
+    file=Path(path)
+    if file.stat().st_size>65536:raise ValueError('Configuração muito grande.')
+    data=json.loads(file.read_text(encoding='utf-8'))
+    return validate_endpoint(dict(mode='metered',api_key=data['public_key'],ice_servers=data['ice_servers']))
+
 def is_express(endpoint):
     urls=[u for s in endpoint.get('ice_servers',[]) for u in s['urls']]
     return bool(urls) and all((urlsplit(u.replace(':', '://',1)).hostname or '').endswith('.expressturn.com') for u in urls)

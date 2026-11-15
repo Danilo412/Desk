@@ -2,8 +2,8 @@
 [Setup]
 AppId={{118A8B81-6561-4B50-88C6-E4E569DC6909}
 AppName=Desk
-AppVersion=0.12.0
-VersionInfoVersion=0.12.0.0
+AppVersion=0.12.1
+VersionInfoVersion=0.12.1.0
 AppPublisher=Desk
 DefaultDirName={localappdata}\Programs\Desk
 DefaultGroupName=Desk
@@ -13,7 +13,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
 OutputDir=..\dist\publish
-OutputBaseFilename=Desk-0.12.0-Update
+OutputBaseFilename=Desk-0.12.1-Update
 SetupIconFile=..\assets\desk.ico
 UninstallDisplayIcon={app}\Desk.exe
 LicenseFile={#AppRoot}\LICENSE

@@ -1,18 +1,22 @@
-DESK 0.12.0 — ATUALIZAÇÕES PELO PRÓPRIO PROGRAMA
+DESK 0.12.1
 
-Instale esta versão uma vez nos computadores que ainda usam o Desk antigo.
-Ela busca novas versões ao abrir e a cada 5 minutos enquanto estiver em execução.
-O botão “Atualizar” avisa quando houver uma versão nova. Você também pode usar
-o menu “Verificar atualizações”. O download começa somente após seu clique;
-o instalador abre após uma segunda confirmação. Nenhuma sessão em andamento
-é encerrada automaticamente para instalar atualizações.
+Consolida os favoritos e o histórico de cada computador, preservando nomes,
+autorizações e senhas locais. A migração mantém uma cópia protegida do perfil.
+O número fixo de cada computador não muda.
 
-O número fixo, os favoritos, os dispositivos autorizados e as configurações
-de conexão existentes são preservados. Este pacote público não inclui
-credenciais de relay; ele mantém o internet.json que já existe na instalação.
-Uma instalação limpa precisa da configuração de conexão do proprietário.
+Corrige a recuperação da configuração salva de internet, mostra quando ela
+está ausente e permite importar a configuração privada do proprietário em
+Configurações > Conexão. Instalações públicas não contêm credenciais de relay.
+O pacote privado configurado é destinado apenas aos computadores do usuário.
 
-Os avisos de atualização são assinados pelo publicador e o download é
-conferido antes de abrir. Essa assinatura interna não substitui a assinatura
-de código exigida pelo Windows. O bloqueio do executável neste PC continua
-pendente de uma assinatura confiável; nenhuma proteção é desativada.
+Limites do provedor agora são diferenciados de computador indisponível.
+O limite interno de consultas ao endereço deixa de bloquear o recebimento
+por toda a duração do convite: a proteção se renova em uma janela curta.
+
+O Desk 0.12 busca atualizações ao abrir e a cada cinco minutos, com confirmação
+local para baixar e instalar. Clientes mais antigos precisam instalar a base
+0.12 uma vez. Sessões ou gravações ativas impedem a atualização pelo programa.
+
+O manifesto de atualização é conferido, mas ainda não existe assinatura
+Authenticode confiável para os executáveis. O Windows pode bloquear a execução.
+Nenhuma proteção é desativada pelo Desk ou pelo atualizador.

@@ -236,6 +236,8 @@ class MainWindow(DeskShell,QMainWindow):
         self.connection_epoch=0;self.pending_channel=None;self.numeric_invite=None;self.cloud_signaling_key=''
         from .identity import IdentityStore
         self.identity=IdentityStore();self.persistent=None;self.session_gate=threading.Lock();self.force_exit=False
+        from .connection_catalog import consolidate_connections
+        consolidate_connections(self.identity)
         self.backend=None;self._fullscreen=False;self.fullscreen_window=None
         self.control_authorized=False;self._remember_approved_public=None;self._viewer_gate_held=False
         self.frame_lock=threading.Lock();self.latest_frame=None;self.available_profile='';self.last_connection_profile=''
@@ -338,6 +340,7 @@ class MainWindow(DeskShell,QMainWindow):
         settings=self.identity.settings()
         cloud_key='';cloud={}
         from .wire import ProtocolError
+        from .relay import endpoint_from_token
         try:
             config_path=(Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[2])/'internet.json'
             cloud={} if os.environ.get('NOVOACESSO_OFFLINE')=='1' else json.loads(config_path.read_text(encoding='utf-8'))
@@ -351,6 +354,11 @@ class MainWindow(DeskShell,QMainWindow):
         if cloud_key:self.cloud_signaling_key=cloud.get('public_key','')
         self.shipped_cloud_key=cloud_key;self.shipped_cloud_revision=cloud.get('config_revision','')
         saved_config=settings.get('relay_config') or ''
+        if not self.cloud_signaling_key and saved_config:
+            try:
+                saved_endpoint=endpoint_from_token(saved_config)
+                if saved_endpoint.get('mode')=='metered':self.cloud_signaling_key=saved_endpoint['api_key']
+            except (ValueError,ProtocolError):pass
         if cloud_key and saved_config and cloud.get('provider')=='ExpressTURN':
             try:
                 from .network_config import use_shipped_relay
@@ -370,12 +378,25 @@ class MainWindow(DeskShell,QMainWindow):
         return endpoint
     def apply_network(self):
         try:
-            self.relay_endpoint()
+            endpoint=self.relay_endpoint()
             value=self.relay_config.text().strip()
             self.identity.configure(relay_config=value,use_relay=self.use_relay.isChecked(),force_relay=self.force_relay.isChecked(),relay_customized=value!=self.shipped_cloud_key,shipped_relay_revision=self.shipped_cloud_revision)
-            if self.unattended.isChecked():self.start_persistent()
+            if endpoint and endpoint.get('mode')=='metered':self.cloud_signaling_key=endpoint['api_key']
+            if not self.peer and not self.connecting:
+                if self.unattended.isChecked():self.start_persistent()
+                self.stop_sharing();QTimer.singleShot(0,self.prepare_address)
             self.activity.setText('Configuração de conexão salva neste usuário.')
         except Exception as ex:self.notice(str(ex))
+    def import_network_configuration(self):
+        path,_=QFileDialog.getOpenFileName(self,'Importar configuração privada de conexão','','Configuração JSON (*.json)')
+        if not path:return
+        try:
+            from .network_config import read_configuration
+            from .relay import token_encode
+            endpoint=read_configuration(path)
+            self.relay_config.setText(token_encode('NAR1-',endpoint));self.use_relay.setChecked(True);self.apply_network()
+            self.relay_test_status.setText('Configuração importada. Preparando seu endereço na rede Desk…')
+        except Exception:self.notice('O arquivo não contém uma configuração de conexão válida. Nenhum dado de identidade foi importado.')
     def test_relay(self):
         try:
             endpoint=self.relay_endpoint()

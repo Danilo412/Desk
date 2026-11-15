@@ -9,11 +9,11 @@ shutil.copy2(root/'packaging/README_INSTALL.txt',target/'COMO-USAR.txt')
 assert not (target/'internet.json').exists(),'Public build must not contain a real connection configuration'
 publish.mkdir(parents=True,exist_ok=True)
 tracked=subprocess.run(['git','ls-files','-z'],cwd=root,capture_output=True,check=True).stdout.decode().split('\0')
-with zipfile.ZipFile(target/'codigo-fonte-Desk-0.12.0.zip','w',zipfile.ZIP_DEFLATED) as archive:
+with zipfile.ZipFile(target/'codigo-fonte-Desk-0.12.1.zip','w',zipfile.ZIP_DEFLATED) as archive:
     for name in sorted(filter(None,tracked)):
         path=root/name
         if path.is_file():archive.write(path,'Desk/'+name)
-shutil.copy2(target/'codigo-fonte-Desk-0.12.0.zip',publish/'Desk-0.12.0-Codigo-Fonte.zip')
+shutil.copy2(target/'codigo-fonte-Desk-0.12.1.zip',publish/'Desk-0.12.1-Codigo-Fonte.zip')
 files=[p for p in target.rglob('*') if p.is_file()]
 assert not any(p.name in ('identity.dat','internet.json') for p in files)
 print(json.dumps(dict(public_build=True,files=len(files),live_connection_configuration=False)))
