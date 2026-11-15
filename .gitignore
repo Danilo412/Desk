@@ -17,3 +17,5 @@ identity.dat
 *.log
 *.lnk
 erro-ao-abrir.txt
+
+native/DeskHost/bin/

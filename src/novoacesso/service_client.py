@@ -1,0 +1,208 @@
+"""Client of the optional, signed LocalSystem screen broker.
+
+The broker owns no network socket. Only an already-approved host Peer opens
+this local lease. Production server/client identities are pinned by the
+administrator's protected installation, never by a per-user setting.
+"""
+from __future__ import annotations
+import ctypes,hashlib,math,os,struct,sys,threading,time
+from pathlib import Path
+from ctypes import wintypes
+from PIL import Image
+
+MAX_REPLY=32*1024*1024
+FRAME=struct.Struct('<8iHHI')
+SERVICE_KEY=r'SOFTWARE\DeskHost'
+BUTTONS={'left':0,'right':1,'middle':2,'back':3,'forward':4}
+
+def input_packet(value):
+    kind=value.get('event')
+    if kind=='release':return b'\x04\x05'
+    if kind in ('move','button'):
+        x,y=value.get('x'),value.get('y')
+        if any(type(n) not in (int,float) or not math.isfinite(n) or not 0<=n<=1 for n in (x,y)):raise ValueError('Coordenadas inválidas.')
+        if kind=='move':return b'\x04\x01'+struct.pack('<dd',x,y)
+        button,down=value.get('button'),value.get('down')
+        if button not in BUTTONS or type(down) is not bool:raise ValueError('Botão inválido.')
+        return bytes((4,3,BUTTONS[button],int(down)))+struct.pack('<dd',x,y)
+    if kind=='key':
+        vk,down=value.get('vk'),value.get('down')
+        if type(vk) is not int or not 1<=vk<=254 or type(down) is not bool:raise ValueError('Tecla inválida.')
+        return b'\x04\x02'+struct.pack('<HB',vk,int(down))
+    if kind=='wheel':
+        delta=value.get('delta')
+        if type(delta) is not int or abs(delta)>1200:raise ValueError('Rolagem inválida.')
+        return b'\x04\x04'+struct.pack('<i',delta)
+    raise ValueError('Entrada indisponível.')
+
+def decode_frame(reply,max_width,max_height):
+    if not isinstance(reply,bytes) or not 1+FRAME.size<=len(reply)<=MAX_REPLY or reply[0]!=0:raise OSError('Captura pelo serviço indisponível.')
+    left,top,width,height,vl,vt,vw,vh,w,h,stride=FRAME.unpack_from(reply,1)
+    if not (1<=width<=32768 and 1<=height<=32768 and 2<=vw<=32768 and 2<=vh<=32768 and vl<=left and vt<=top and left+width<=vl+vw and top+height<=vt+vh):raise ValueError('Geometria do serviço inválida.')
+    if not (1<=w<=max_width<=3840 and 1<=h<=max_height<=2160) or stride!=(w*3+3)&~3 or len(reply)!=1+FRAME.size+stride*h:raise ValueError('Imagem do serviço fora dos limites.')
+    image=Image.frombytes('RGB',(w,h),reply[1+FRAME.size:],'raw','BGR',stride,1)
+    return image,dict(left=left,top=top,width=width,height=height),dict(left=vl,top=vt,width=vw,height=vh)
+
+def installed_configuration():
+    if os.name!='nt':return None
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,SERVICE_KEY,0,winreg.KEY_READ|winreg.KEY_WOW64_64KEY) as key:
+            result={name:winreg.QueryValueEx(key,name)[0] for name in ('OwnerSid','ClientPath','ClientHash','ServiceHash')}
+        if any(not isinstance(v,str) for v in result.values()):return None
+        for name in ('ClientHash','ServiceHash'):
+            if len(result[name])!=64 or any(c not in '0123456789abcdef' for c in result[name]):return None
+        if not result['OwnerSid'].startswith('S-1-5-21-') or not result['OwnerSid'][9:].replace('-','').isdigit():return None
+        result['ServicePath']=str(Path(os.environ['ProgramFiles'])/'DeskHost/DeskHost.exe')
+        if os.path.normcase(os.path.abspath(result['ClientPath']))!=os.path.normcase(os.path.abspath(sys.executable)):return None
+        # The service revalidates the running image's trusted publisher.
+        # Do not disable it after an ordinary signed update of Desk.exe.
+        return result
+    except (OSError,ValueError,KeyError):return None
+
+class OVERLAPPED(ctypes.Structure):
+    _fields_=[('Internal',ctypes.c_size_t),('InternalHigh',ctypes.c_size_t),('Offset',wintypes.DWORD),('OffsetHigh',wintypes.DWORD),('hEvent',wintypes.HANDLE)]
+
+class WindowsPipe:
+    """Overlapped, bounded I/O; closing a lease cancels pending requests."""
+    def __init__(self,config):
+        self.api=ctypes.WinDLL('kernel32',use_last_error=True);self.security=ctypes.WinDLL('advapi32',use_last_error=True);self.handle=None;self.state_lock=threading.Lock();self.closing=False;self.active=0
+        signatures={
+            'WaitNamedPipeW':([wintypes.LPCWSTR,wintypes.DWORD],wintypes.BOOL),
+            'CreateFileW':([wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,ctypes.c_void_p,wintypes.DWORD,wintypes.DWORD,wintypes.HANDLE],wintypes.HANDLE),
+            'CloseHandle':([wintypes.HANDLE],wintypes.BOOL),
+            'CreateEventW':([ctypes.c_void_p,wintypes.BOOL,wintypes.BOOL,wintypes.LPCWSTR],wintypes.HANDLE),
+            'ReadFile':([wintypes.HANDLE,ctypes.c_void_p,wintypes.DWORD,ctypes.POINTER(wintypes.DWORD),ctypes.POINTER(OVERLAPPED)],wintypes.BOOL),
+            'WriteFile':([wintypes.HANDLE,ctypes.c_void_p,wintypes.DWORD,ctypes.POINTER(wintypes.DWORD),ctypes.POINTER(OVERLAPPED)],wintypes.BOOL),
+            'WaitForSingleObject':([wintypes.HANDLE,wintypes.DWORD],wintypes.DWORD),
+            'GetOverlappedResult':([wintypes.HANDLE,ctypes.POINTER(OVERLAPPED),ctypes.POINTER(wintypes.DWORD),wintypes.BOOL],wintypes.BOOL),
+            'CancelIoEx':([wintypes.HANDLE,ctypes.POINTER(OVERLAPPED)],wintypes.BOOL),
+            'GetNamedPipeServerProcessId':([wintypes.HANDLE,ctypes.POINTER(wintypes.ULONG)],wintypes.BOOL),
+            'OpenProcess':([wintypes.DWORD,wintypes.BOOL,wintypes.DWORD],wintypes.HANDLE),
+            'ProcessIdToSessionId':([wintypes.DWORD,ctypes.POINTER(wintypes.DWORD)],wintypes.BOOL),
+            'QueryFullProcessImageNameW':([wintypes.HANDLE,wintypes.DWORD,wintypes.LPWSTR,ctypes.POINTER(wintypes.DWORD)],wintypes.BOOL),
+            'LocalFree':([ctypes.c_void_p],ctypes.c_void_p),
+        }
+        for name,(args,result) in signatures.items():fn=getattr(self.api,name);fn.argtypes=args;fn.restype=result
+        self.security.OpenProcessToken.argtypes=[wintypes.HANDLE,wintypes.DWORD,ctypes.POINTER(wintypes.HANDLE)];self.security.OpenProcessToken.restype=wintypes.BOOL
+        self.security.GetTokenInformation.argtypes=[wintypes.HANDLE,ctypes.c_int,ctypes.c_void_p,wintypes.DWORD,ctypes.POINTER(wintypes.DWORD)];self.security.GetTokenInformation.restype=wintypes.BOOL
+        self.security.ConvertSidToStringSidW.argtypes=[ctypes.c_void_p,ctypes.POINTER(wintypes.LPWSTR)];self.security.ConvertSidToStringSidW.restype=wintypes.BOOL
+        name=r'\\.\pipe\DeskHost.'+config['OwnerSid']
+        if not self.api.WaitNamedPipeW(name,2000):raise OSError('O serviço de tela de bloqueio não está disponível.')
+        handle=self.api.CreateFileW(name,0xC0000000,0,None,3,0x40000000|0x00110000,None)
+        if handle==ctypes.c_void_p(-1).value:raise OSError('Não foi possível abrir o serviço autorizado.')
+        self.handle=handle
+        try:self.verify_server(config)
+        except Exception:self.close();raise
+
+    def verify_server(self,config):
+        pid=wintypes.ULONG();session=wintypes.DWORD()
+        if not self.api.GetNamedPipeServerProcessId(self.handle,ctypes.byref(pid)) or not self.api.ProcessIdToSessionId(pid.value,ctypes.byref(session)) or session.value!=0:raise OSError('Servidor de serviço inválido.')
+        process=self.api.OpenProcess(0x1000,False,pid.value)
+        if not process:raise OSError('Identidade do serviço indisponível.')
+        token=wintypes.HANDLE()
+        try:
+            name=ctypes.create_unicode_buffer(32768);count=wintypes.DWORD(len(name))
+            if not self.api.QueryFullProcessImageNameW(process,0,name,ctypes.byref(count)) or os.path.normcase(name.value)!=os.path.normcase(config['ServicePath']):raise OSError('Caminho do serviço inválido.')
+            if hashlib.sha256(Path(name.value).read_bytes()).hexdigest()!=config['ServiceHash']:raise OSError('O serviço não corresponde à instalação autorizada.')
+            if not self.security.OpenProcessToken(process,8,ctypes.byref(token)):raise OSError('Token do serviço indisponível.')
+            needed=wintypes.DWORD();self.security.GetTokenInformation(token,1,None,0,ctypes.byref(needed))
+            if not 8<=needed.value<=65536:raise OSError('Token inválido.')
+            buffer=ctypes.create_string_buffer(needed.value)
+            if not self.security.GetTokenInformation(token,1,buffer,len(buffer),ctypes.byref(needed)):raise OSError('Token inválido.')
+            sid=ctypes.cast(buffer,ctypes.POINTER(ctypes.c_void_p))[0];text=wintypes.LPWSTR()
+            if not self.security.ConvertSidToStringSidW(sid,ctypes.byref(text)):raise OSError('Identidade do serviço inválida.')
+            try:
+                if text.value!='S-1-5-18':raise OSError('O servidor não é o serviço de sistema autorizado.')
+            finally:self.api.LocalFree(ctypes.cast(text,ctypes.c_void_p))
+        finally:
+            if token:self.api.CloseHandle(token)
+            self.api.CloseHandle(process)
+
+    def _io(self,data,size,write,deadline):
+        with self.state_lock:
+            handle=self.handle
+            if handle is None or self.closing:raise OSError('Serviço desconectado.')
+            self.active+=1
+        event=None
+        try:
+            event=self.api.CreateEventW(None,True,False,None)
+            if not event:raise OSError('Evento de serviço indisponível.')
+            overlapped=OVERLAPPED();overlapped.hEvent=event;count=wintypes.DWORD();buffer=ctypes.create_string_buffer(data,size) if write else ctypes.create_string_buffer(size)
+            fn=self.api.WriteFile if write else self.api.ReadFile
+            if not fn(handle,buffer,size,ctypes.byref(count),ctypes.byref(overlapped)):
+                if ctypes.get_last_error()!=997:raise OSError('Falha de comunicação com o serviço.')
+                milliseconds=max(0,int((deadline-time.monotonic())*1000))
+                if self.api.WaitForSingleObject(event,milliseconds)!=0:
+                    self.api.CancelIoEx(handle,ctypes.byref(overlapped));self.api.GetOverlappedResult(handle,ctypes.byref(overlapped),ctypes.byref(count),True)
+                    raise TimeoutError('O serviço não respondeu dentro do prazo.')
+            if not self.api.GetOverlappedResult(handle,ctypes.byref(overlapped),ctypes.byref(count),False) or count.value==0:raise OSError('O serviço encerrou a comunicação.')
+            return count.value if write else buffer.raw[:count.value]
+        finally:
+            if event:self.api.CloseHandle(event)
+            with self.state_lock:
+                self.active-=1
+                if self.closing and self.active==0 and self.handle is not None:self.api.CloseHandle(self.handle);self.handle=None
+
+    def exchange(self,payload,timeout):
+        if not 1<=len(payload)<=512:raise ValueError('Solicitação de serviço inválida.')
+        deadline=time.monotonic()+timeout;data=struct.pack('<I',len(payload))+payload
+        while data:data=data[self._io(data,len(data),True,deadline):]
+        def read_exact(size):
+            chunks=[];remaining=size
+            while remaining:
+                chunk=self._io(None,remaining,False,deadline);chunks.append(chunk);remaining-=len(chunk)
+            return b''.join(chunks)
+        length=struct.unpack('<I',read_exact(4))[0]
+        if not 1<=length<=MAX_REPLY:raise ValueError('Resposta do serviço fora dos limites.')
+        return read_exact(length)
+
+    def close(self):
+        with self.state_lock:
+            self.closing=True;handle=self.handle
+            if handle is not None:
+                self.api.CancelIoEx(handle,None)
+                if self.active==0:self.api.CloseHandle(handle);self.handle=None
+
+class BrokerClient:
+    def __init__(self,connector=None,configuration=None):
+        self.connector=connector or WindowsPipe;self.config=configuration if configuration is not None else installed_configuration()
+        self.authorized=False;self.connection=None;self.lock=threading.RLock();self.state_lock=threading.Lock();self.last_error=''
+    @property
+    def installed(self):return self.config is not None
+    def begin_session(self):
+        self.authorized=True
+    def end_session(self):
+        self.authorized=False
+        with self.state_lock:connection=self.connection;self.connection=None
+        if connection:connection.close()
+    def _request(self,payload,timeout=2):
+        with self.lock:
+            if not self.authorized or not self.config:raise OSError('O serviço não está instalado e autorizado para esta sessão.')
+            with self.state_lock:
+                if self.connection is None:self.connection=self.connector(self.config)
+                connection=self.connection
+            try:
+                reply=connection.exchange(payload,timeout)
+                if not self.authorized:raise OSError('A autorização da sessão foi encerrada.')
+                if not reply or reply[0]!=0:raise OSError('O serviço recusou esta operação.')
+                self.last_error='';return reply
+            except Exception:
+                self.last_error='Serviço indisponível. Confira a assinatura, a instalação e a autorização de administrador.'
+                with self.state_lock:
+                    if self.connection is connection:self.connection=None
+                connection.close();raise
+    def available(self):
+        if not self.installed or not self.authorized:return False
+        try:return self._request(b'\x01') in (b'\0\0',b'\0\1')
+        except (OSError,ValueError):return False
+    def capture(self,index,width):
+        height=1440 if width>1920 else 1080 if width>=1920 else 720 if width>=1280 else 1080
+        request=struct.pack('<BiHHB',3,index,width,height,1)
+        return decode_frame(self._request(request,5),width,height)
+    def input(self,value):self._request(input_packet(value))
+    def release(self):
+        with self.state_lock:connected=self.connection is not None
+        if self.authorized and connected:
+            try:self._request(b'\x05')
+            except (OSError,ValueError):pass

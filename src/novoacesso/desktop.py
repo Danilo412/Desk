@@ -26,6 +26,8 @@ class CursorInfo(ctypes.Structure):
 class DesktopBackend:
     def __init__(self):
         self.lock=threading.RLock();self.rect=None;self.virtual_rect=None;self.keys=set();self.buttons=set()
+        from .service_client import BrokerClient
+        self.secure=BrokerClient()
         self.user=ctypes.WinDLL("user32",use_last_error=True)
         self.user.SendInput.argtypes=[ctypes.c_uint,ctypes.POINTER(NativeInput),ctypes.c_int];self.user.SendInput.restype=ctypes.c_uint
         self.user.GetSystemMetrics.argtypes=[ctypes.c_int];self.user.GetSystemMetrics.restype=ctypes.c_int
@@ -63,7 +65,7 @@ class DesktopBackend:
     def monitors(self):
         with self.physical_coordinates(),mss.MSS() as source:return [dict(m) for m in source.monitors]
 
-    def input_desktop_state(self):
+    def local_desktop_state(self):
         # Read only: never switches desktop or changes its permissions.
         desktop=self.user.OpenInputDesktop(0,False,1)
         if not desktop:return 'protected'
@@ -72,6 +74,18 @@ class DesktopBackend:
             if not self.user.GetUserObjectInformationW(desktop,2,name,ctypes.sizeof(name),ctypes.byref(needed)):return 'protected'
             return 'desktop' if name.value.casefold()=='default' else 'protected'
         finally:self.user.CloseDesktop(desktop)
+
+    def input_desktop_state(self):
+        state=self.local_desktop_state()
+        secure=getattr(self,'secure',None)
+        return 'desktop' if state=='protected' and secure and secure.available() else state
+
+    def begin_secure_session(self):
+        self.secure.begin_session()
+
+    def end_secure_session(self):
+        secure=getattr(self,'secure',None)
+        if secure:secure.end_session()
 
     def capture_source(self):
         from .capture import CaptureSource
@@ -86,6 +100,12 @@ class DesktopBackend:
         return self._cursor_shapes.get(info.hCursor,'arrow') if self.user.GetCursorInfo(ctypes.byref(info)) and info.flags&1 else 'arrow'
 
     def capture(self,source,index,width):
+        secure=getattr(self,'secure',None)
+        if secure and secure.authorized and self.local_desktop_state()=='protected':
+            image,rect,virtual=secure.capture(index,width)
+            with self.lock:self.rect=rect;self.virtual_rect=virtual
+            if hasattr(source,'backend'):source.backend='Serviço Windows';source.unchanged=False
+            return image
         with self.physical_coordinates():return self._capture_physical(source,index,width)
 
     def _capture_physical(self,source,index,width):
@@ -103,6 +123,8 @@ class DesktopBackend:
 
     def input(self,data):
         with self.lock,self.physical_coordinates():
+            secure=getattr(self,'secure',None)
+            if secure and secure.authorized and self.local_desktop_state()=='protected':secure.input(data);return
             kind=data.get("event")
             if kind in ("move","button"):
                 x,y=data.get("x"),data.get("y")
@@ -126,6 +148,8 @@ class DesktopBackend:
             elif kind=="release":self.release()
 
     def release(self):
+        secure=getattr(self,'secure',None)
+        if secure:secure.release()
         with self.lock,self.physical_coordinates():
             for key in self.keys:
                 try:self._key(key,False)

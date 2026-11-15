@@ -356,6 +356,10 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         access=section('Acesso sem supervisão','Somente dispositivos autorizados podem voltar sem uma nova solicitação de aceite.')
         self.unattended=QCheckBox('Habilitar acesso permanente por dispositivos autorizados');self.unattended.setChecked(settings.get('unattended',False));self.unattended.toggled.connect(self.unattended_changed);access.addWidget(self.unattended)
         self.autostart=QCheckBox('Iniciar com o Windows, após meu login');self.autostart.setChecked(settings.get('autostart',False));self.autostart.toggled.connect(self.autostart_changed);access.addWidget(self.autostart)
+        from .service_client import installed_configuration
+        service_installed=installed_configuration() is not None
+        access.addWidget(hint('Serviço de tela de bloqueio: '+('registrado para este Desk.' if service_installed else 'não instalado para este Desk.')))
+        access.addWidget(hint('A tela de senha exige o instalador separado do serviço, com assinatura confiável e aprovação de administrador na máquina que será acessada. Ele só atende sessões já autorizadas com mouse e teclado. O Desk precisa permanecer aberto após seu login no Windows; esta etapa não oferece conexão antes do primeiro login nem dispensa a senha do Windows.'))
         self.unattended_files=QCheckBox('Receber arquivos autorizados em Downloads sem pedir destino');self.unattended_files.setChecked(settings.get('unattended_files',False));self.unattended_files.toggled.connect(lambda enabled:self.identity.configure(unattended_files=enabled));access.addWidget(self.unattended_files)
         access.addWidget(hint('Faça uma sessão aprovada antes de autorizar um dispositivo. O Desk pede confirmação para ativar o acesso permanente.'))
         self.permanent_profile=QPlainTextEdit();self.permanent_profile.setReadOnly(True);self.permanent_profile.setMaximumHeight(100);self.permanent_profile.setPlaceholderText('O perfil aparece ao habilitar o acesso permanente. Compartilhe somente com o dispositivo autorizado.');access.addWidget(self.permanent_profile)

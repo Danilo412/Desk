@@ -1,7 +1,7 @@
 name: Windows build and tests
 on:
   push:
-    branches: [main]
+    branches: [main, service-preview]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -28,15 +28,19 @@ jobs:
           python -m pip install --no-deps -e .
       - name: Test application
         run: python -m pytest tests -q --disable-warnings
+      - name: Build and test service protocol without activation
+        run: python native/DeskHost/build_service.py
       - name: Build public application without service credentials
         run: python scripts/build_windows.py
       - name: Test packaged application with synthetic data
         run: python scripts/validate_package.py
       - name: Build public unsigned installer
         run: python scripts/build_installer.py
+      - name: Build service installer without activation
+        run: python scripts/build_service_installer.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: Desk-0.12.5-Windows-x64-unsigned
+          name: Desk-0.13.0-Windows-x64-unsigned
           path: dist/publish/*
           if-no-files-found: error
           retention-days: 30

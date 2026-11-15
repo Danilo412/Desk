@@ -50,6 +50,7 @@ class Peer:
         if self.role=='viewer':self.spawn(self._decode_video)
         self.spawn(self._receive);self.spawn(self._heartbeat)
         if self.role=="host":
+            if self.permissions.get('control') and callable(getattr(self.backend,'begin_secure_session',None)):self.backend.begin_secure_session()
             self.spawn(self._capture)
             self.spawn(self._audio_watch)
             if callable(getattr(self.backend,'cursor',None)):self.spawn(self._cursor_updates)
@@ -102,6 +103,8 @@ class Peer:
         with self.input_lock:
             old=self.permissions.copy();self.permissions.update(permissions)
             if old.get('control') and not self.permissions.get('control') and self.backend:self.backend.release()
+            if old.get('control') and not self.permissions.get('control') and callable(getattr(self.backend,'end_secure_session',None)):self.backend.end_secure_session()
+            if not old.get('control') and self.permissions.get('control') and callable(getattr(self.backend,'begin_secure_session',None)):self.backend.begin_secure_session()
         if not self.permissions.get("audio") or not old.get("audio"):self.audio_capture_attempted=False
         if old.get('control') and not self.permissions.get('control'):self.features.revoke()
         self.send(dict(type="permissions",values=self.permissions))
@@ -433,7 +436,9 @@ class Peer:
         if self.closed.is_set():return
         self.closed.set();self.input_dispatch.stop();self.fast_audio.stop();self.fast_input.stop();self.channel.close()
         self.features.revoke();self.recording_audio_sink=None
-        if self.backend:self.backend.release()
+        if self.backend:
+            if callable(getattr(self.backend,'end_secure_session',None)):self.backend.end_secure_session()
+            self.backend.release()
         with self.transfer_lock:
             for id,item in self.transfers.items():
                 self.transfer_event(id,'receive',item['name'],item['size'],item['received'],'interrupted')

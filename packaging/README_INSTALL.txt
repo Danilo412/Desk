@@ -1,24 +1,20 @@
-DESK 0.12.5 — CONTROLE E CURSOR
+DESK 0.13.0 — PREPARAÇÃO DO SERVIÇO DE TELA DE BLOQUEIO
 
-Atualize as DUAS pontas. Os comandos de mouse e teclado usam um canal
-WebRTC separado, confiável e ordenado, protegido por uma chave temporária
-negociada dentro da sessão TLS já autorizada. Clientes antigos continuam
-compatíveis pelo transporte anterior. Não há alteração nas permissões.
+Esta é uma prévia para assinatura e validação. O serviço não está ativado.
+O programa principal mantém as correções de mouse, som e atualizações.
 
-Durante o controle, a captura MSS exclui o cursor da imagem para evitar
-um ponteiro pequeno e atrasado acompanhando o cursor local imediato.
-Permanecem as correções de escala, redimensionamento e tela cheia da 0.12.4.
+O novo componente permite que o aplicativo já aberto, em uma sessão remota
+autorizada com mouse e teclado, solicite captura e entrada na tela de senha
+através de um serviço local. Ele não remove nem armazena a senha do Windows.
+Não oferece conexão antes do primeiro login do proprietário neste computador.
 
-TELA DE BLOQUEIO
-Esta versão NÃO controla a tela de login ou o desktop protegido do Windows.
-O aplicativo ainda não possui um serviço de sistema para esse recurso.
-O Desk informa o bloqueio e preserva a conexão; desbloqueie diretamente na
-outra máquina. O controle volta com as mesmas permissões após desbloquear.
-Recusas de entrada do Windows não encerram mais a sessão inteira.
+São necessários: assinatura Authenticode confiável no Desk e no serviço,
+instalação do serviço com aprovação de administrador, e teste físico real.
+Sem isso, a sessão continua limitada ao desktop desbloqueado. O instalador
+do serviço verifica as assinaturas antes de registrar qualquer serviço.
 
-ATUALIZAÇÕES
-Menu > Configurações > Atualizações ou Menu > Verificar atualizações.
-O Windows pode impedir a execução: o pacote ainda não tem Authenticode.
-A assinatura do manifesto de atualização não substitui Authenticode.
-O instalador preserva número, favoritos e configurações existentes.
-O pacote público NÃO inclui credenciais de relay ou identidades privadas.
+O pacote público não contém credenciais de relay, identidades ou senhas.
+Atualizações do aplicativo com o mesmo certificado e caminho continuam
+permitidas; mudanças do certificado ou do serviço requerem nova aprovação.
+A assinatura gratuita da Microsoft Store cobre o pacote MSIX distribuído
+pela Store; não é uma assinatura avulsa deste instalador EXE.
