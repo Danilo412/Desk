@@ -108,7 +108,11 @@ def test_pointer_final_move_is_sent_after_throttled_burst_and_focus_loss_cancels
         event=QMouseEvent(QEvent.Type.MouseMove,QPointF(x,100),QPointF(x,100),Qt.MouseButton.NoButton,Qt.MouseButton.NoButton,Qt.KeyboardModifier.NoModifier)
         QApplication.sendEvent(canvas,event)
     try:
-        move(100);move(101);move(140);QTest.qWait(25)
+        move(100);move(101);move(140)
+        # Wait for the event-loop condition, not a single short Windows sleep
+        # whose scheduling varies during encoder/build load on the same host.
+        deadline=time.monotonic()+.25
+        while abs([e for e in events if e['event']=='move'][-1]['x']-140/640)>=.01 and time.monotonic()<deadline:QTest.qWait(10)
         assert abs([e for e in events if e['event']=='move'][-1]['x']-140/640)<.01
         move(180);canvas.clearFocus();QTest.qWait(20)
         assert canvas.pending_move is None

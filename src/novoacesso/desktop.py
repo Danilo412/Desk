@@ -29,6 +29,10 @@ class DesktopBackend:
         self.user=ctypes.WinDLL("user32",use_last_error=True)
         self.user.SendInput.argtypes=[ctypes.c_uint,ctypes.POINTER(NativeInput),ctypes.c_int];self.user.SendInput.restype=ctypes.c_uint
         self.user.GetSystemMetrics.argtypes=[ctypes.c_int];self.user.GetSystemMetrics.restype=ctypes.c_int
+        self.user.OpenInputDesktop.argtypes=[wintypes.DWORD,wintypes.BOOL,wintypes.DWORD];self.user.OpenInputDesktop.restype=wintypes.HANDLE
+        self.user.CloseDesktop.argtypes=[wintypes.HANDLE];self.user.CloseDesktop.restype=wintypes.BOOL
+        self.user.GetUserObjectInformationW.argtypes=[wintypes.HANDLE,ctypes.c_int,ctypes.c_void_p,wintypes.DWORD,ctypes.POINTER(wintypes.DWORD)]
+        self.user.GetUserObjectInformationW.restype=wintypes.BOOL
         if hasattr(self.user,'SetThreadDpiAwarenessContext'):
             self.user.SetThreadDpiAwarenessContext.argtypes=[ctypes.c_void_p];self.user.SetThreadDpiAwarenessContext.restype=ctypes.c_void_p
 
@@ -58,6 +62,16 @@ class DesktopBackend:
 
     def monitors(self):
         with self.physical_coordinates(),mss.MSS() as source:return [dict(m) for m in source.monitors]
+
+    def input_desktop_state(self):
+        # Read only: never switches desktop or changes its permissions.
+        desktop=self.user.OpenInputDesktop(0,False,1)
+        if not desktop:return 'protected'
+        try:
+            name=ctypes.create_unicode_buffer(256);needed=wintypes.DWORD()
+            if not self.user.GetUserObjectInformationW(desktop,2,name,ctypes.sizeof(name),ctypes.byref(needed)):return 'protected'
+            return 'desktop' if name.value.casefold()=='default' else 'protected'
+        finally:self.user.CloseDesktop(desktop)
 
     def capture_source(self):
         from .capture import CaptureSource

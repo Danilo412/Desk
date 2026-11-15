@@ -19,6 +19,7 @@ class MeteredStream:
         self.failure=None;self.loop=None;self.done=None
         self.route_info='WebRTC: rota ainda não identificada'
         self.audio_channel=None;self.audio_ready=threading.Event();self.datagram_handler=None;self.remote_peer=None
+        self.input_channel=None;self.input_ready=threading.Event();self.input_handler=None
         self.thread=threading.Thread(target=self._run,daemon=True)
     def _run(self):
         try:asyncio.run(self._session())
@@ -54,6 +55,25 @@ class MeteredStream:
                 if handler and isinstance(data,bytes) and 24<len(data)<=1400:handler(data)
             if raw.readyState=='open':self.audio_ready.set()
         self._bind_audio=bind_audio
+        def bind_input(raw,remote):
+            if remote is not self.remote_peer:raw.close();return
+            if self.input_channel is raw:return
+            if self.input_channel is not None:raw.close();return
+            # Buttons, releases and keys must remain reliable and ordered.
+            if not raw.ordered or raw.maxRetransmits is not None or raw.maxPacketLifeTime is not None:raw.close();return
+            self.input_channel=raw;audio_channels.append(raw)
+            @raw.on('open')
+            def input_opened():self.input_ready.set()
+            @raw.on('close')
+            def input_closed():
+                self.input_ready.clear()
+                if self.input_handler:self.done.set()
+            @raw.on('message')
+            def input_message(data):
+                handler=self.input_handler
+                if handler and isinstance(data,bytes) and 24<len(data)<=536:handler(data)
+            if raw.readyState=='open':self.input_ready.set()
+        self._bind_input=bind_input
         # 256 KiB in flight, below the data-channel's 512 KiB high-water mark.
         # A 128 KiB window caps a 150 ms route around 7 Mbit/s.
         window=asyncio.BoundedSemaphore(16)
@@ -75,6 +95,7 @@ class MeteredStream:
             finally:self.done.set()
         def bind(raw,remote=None):
             if raw.label=='desk-audio-v1':bind_audio(raw,remote);return
+            if raw.label=='desk-input-v1':bind_input(raw,remote);return
             if len(channels)>=4:raw.close();self.failure='Muitos dispositivos nesta sala.';self.done.set();return
             dc=DataChannel(raw,max_buffered_amount=512*1024,max_queued_sends=8);channels.append(dc)
             def opened(*args):
@@ -121,8 +142,31 @@ class MeteredStream:
             if tasks:await asyncio.gather(*tasks,return_exceptions=True)
             for dc in channels:dc.close()
             self.datagram_handler=None;self.audio_ready.clear()
+            self.input_handler=None;self.input_ready.clear()
             for raw in audio_channels:raw.close()
             await peer.close()
+
+    def open_input_channel(self,timeout=3):
+        if not self.loop or not self.remote_peer or self.stopped.is_set():return False
+        def create():
+            if self.input_channel is None:self._bind_input(self.remote_peer.create_data_channel('desk-input-v1',ordered=True),self.remote_peer)
+        try:self.loop.call_soon_threadsafe(create)
+        except RuntimeError:return False
+        return self.input_ready.wait(timeout)
+
+    def send_input_packet(self,payload):
+        if not self.input_ready.is_set() or self.stopped.is_set() or len(payload)>536:return False
+        result=threading.Event();accepted=[False]
+        def send():
+            try:
+                channel=self.input_channel
+                if channel and channel.readyState=='open' and channel.bufferedAmount<32768:
+                    channel.send(payload);accepted[0]=True
+            except Exception:pass
+            finally:result.set()
+        try:self.loop.call_soon_threadsafe(send)
+        except RuntimeError:return False
+        return result.wait(1) and accepted[0]
 
     def open_audio_channel(self,timeout=3):
         if not self.loop or not self.remote_peer or self.stopped.is_set():return False

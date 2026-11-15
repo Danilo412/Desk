@@ -4,15 +4,15 @@ from PIL import Image
 import mss
 
 class CaptureSource:
-    def __init__(self):self.screen=None;self.camera=None;self.cached=None;self.dxgi_failed=False;self.unchanged=False;self.backend='MSS';self._com=None
-    def __enter__(self):self.screen=mss.MSS();return self
+    def __init__(self):self.screen=None;self.camera=None;self.cached=None;self.dxgi_failed=False;self.unchanged=False;self.backend='MSS';self._com=None;self.separate_cursor=False
+    def __enter__(self):self.screen=mss.MSS(with_cursor=False);return self
     @property
     def monitors(self):return self.screen.monitors
     def image(self,index):
         monitors=self.monitors;rect=monitors[index];self.unchanged=False
         # A captura acelerada só é usada quando a seleção é inequívoca.
         # Sistemas com múltiplas telas continuam usando o monitor exato do MSS.
-        if os.name=='nt' and len(monitors)==2 and index in (0,1) and not self.dxgi_failed and os.environ.get('NOVOACESSO_CAPTURE','auto')!='mss':
+        if os.name=='nt' and not self.separate_cursor and len(monitors)==2 and index in (0,1) and not self.dxgi_failed and os.environ.get('NOVOACESSO_CAPTURE','auto')!='mss':
             try:
                 if self.camera is None:
                     import comtypes

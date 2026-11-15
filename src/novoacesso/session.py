@@ -32,11 +32,14 @@ class Peer:
         self.audio_decode_lock=threading.Lock()
         from .audio_transport import FastAudio
         self.fast_audio=FastAudio(self)
+        from .input_transport import FastInput
+        self.fast_input=FastInput(self);self.input_route_lock=threading.RLock();self.input_lock=threading.RLock()
+        self.control_state='desktop'
         self.receive_metrics={}
         self.video_queue=queue.Queue(maxsize=2)
         self.file_send_queue=queue.Queue(maxsize=32);self.file_sender_running=False
         from .input_dispatch import InputDispatcher
-        self.input_dispatch=InputDispatcher(self.send,self.closed,lambda:self.role=='viewer' and self.permissions.get('control',False),self.close)
+        self.input_dispatch=InputDispatcher(self._dispatch_input,self.closed,lambda:self.role=='viewer' and self.permissions.get('control',False),self.close)
 
     def spawn(self,fn):
         thread=threading.Thread(target=fn,daemon=True);self.workers.append(thread);thread.start();return thread
@@ -50,10 +53,12 @@ class Peer:
             self.spawn(self._capture)
             self.spawn(self._audio_watch)
             if callable(getattr(self.backend,'cursor',None)):self.spawn(self._cursor_updates)
+            if callable(getattr(self.backend,'input_desktop_state',None)):self.spawn(self._desktop_watch)
         from .remote_features import CAPABILITIES
         from .audio_codec import CAPABILITY
         from .audio_transport import CAPABILITY as FAST_AUDIO
-        if getattr(self.channel,'version',1)>=2:self.send(dict(type='capabilities',values=sorted(CAPABILITIES|{CAPABILITY,FAST_AUDIO})))
+        from .input_transport import CAPABILITY as FAST_INPUT
+        if getattr(self.channel,'version',1)>=2:self.send(dict(type='capabilities',values=sorted(CAPABILITIES|{CAPABILITY,FAST_AUDIO,FAST_INPUT})))
         self.event("connected",dict(role=self.role,permissions=self.permissions,monitors=self.monitors))
 
     def send(self,data):
@@ -63,11 +68,41 @@ class Peer:
     def send_input(self,data):
         if self.role=='viewer' and self.permissions.get('control',False):self.input_dispatch.put(data)
 
+    def _dispatch_input(self,value):
+        with self.input_route_lock:
+            if not self.fast_input.send(value):self.send(value)
+
+    def report_control_state(self,state):
+        if state==self.control_state:return
+        self.control_state=state
+        self.send(dict(type='control_state',state=state))
+
+    def _desktop_watch(self):
+        while not self.closed.is_set():
+            try:
+                state=self.backend.input_desktop_state()
+                with self.input_lock:
+                    if state!='desktop' and self.control_state=='desktop':self.backend.release()
+                    if state!='desktop' or self.control_state!='denied':self.report_control_state(state)
+            except Exception:pass
+            self.closed.wait(.5)
+
+    def apply_input(self,msg):
+        with self.input_lock:
+            if self.closed.is_set() or self.role!='host' or not self.permissions.get('control',False):return
+            if self.control_state=='protected':return
+            try:
+                self.backend.input(msg)
+                if self.control_state=='denied':self.report_control_state('desktop')
+            except OSError:
+                self.backend.release();self.report_control_state('denied')
+
     def set_permissions(self,permissions):
         if self.role!="host":return
-        old=self.permissions.copy();self.permissions.update(permissions)
+        with self.input_lock:
+            old=self.permissions.copy();self.permissions.update(permissions)
+            if old.get('control') and not self.permissions.get('control') and self.backend:self.backend.release()
         if not self.permissions.get("audio") or not old.get("audio"):self.audio_capture_attempted=False
-        if old.get("control") and not self.permissions.get("control") and self.backend:self.backend.release()
         if old.get('control') and not self.permissions.get('control'):self.features.revoke()
         self.send(dict(type="permissions",values=self.permissions))
 
@@ -104,7 +139,7 @@ class Peer:
                 while not self.closed.is_set():
                     begin=time.monotonic()
                     with self.options_lock:paused,monitor,width,fps,mode=self.paused,self.monitor,self.width,self.fps,self.mode
-                    if paused:
+                    if paused or self.control_state=='protected':
                         self.closed.wait(.1);continue
                     if modern:
                         import math
@@ -118,7 +153,15 @@ class Peer:
                     if getattr(self.channel.outgoing,'video_pending',self.channel.outgoing.qsize)()>=2:
                         if modern:self.quality.observe(fps,self.quality.encode_ms,2)
                         self.closed.wait(.01);continue
-                    image=self.backend.capture(source,monitor,width)
+                    if hasattr(source,'separate_cursor'):source.separate_cursor=bool(self.permissions.get('control'))
+                    try:image=self.backend.capture(source,monitor,width)
+                    except Exception:
+                        probe=getattr(self.backend,'input_desktop_state',None)
+                        if callable(probe) and probe()=='protected':
+                            with self.input_lock:
+                                self.backend.release();self.report_control_state('protected')
+                            self.closed.wait(.1);continue
+                        raise
                     if getattr(source,'unchanged',False) and encoder.frames and not encoder.contexts:
                         self.closed.wait(1/fps);continue
                     backlog=getattr(self.channel.outgoing,'video_pending',self.channel.outgoing.qsize)()
@@ -191,8 +234,14 @@ class Peer:
             self.features.handle(msg)
             from .audio_codec import CAPABILITY
             from .audio_transport import CAPABILITY as FAST_AUDIO
-            self.remote_media=set(msg['values'])&{CAPABILITY,FAST_AUDIO};self.capabilities_received.set();return
+            from .input_transport import CAPABILITY as FAST_INPUT
+            self.remote_media=set(msg['values'])&{CAPABILITY,FAST_AUDIO,FAST_INPUT};self.capabilities_received.set();self.fast_input.negotiate();return
         if kind in ('audio_route','audio_route_ready'):self.fast_audio.handle(msg);return
+        if kind in ('input_route','input_route_ready'):self.fast_input.handle(msg);return
+        if kind=='control_state':
+            if self.role=='viewer' and msg.get('state') in ('desktop','protected','denied'):
+                self.control_state=msg['state'];self.event('control_state',dict(state=self.control_state))
+            return
         if kind in ('advanced_request','advanced_result','whiteboard_state','annotation'):
             self.features.handle(msg);return
         if kind=='cursor':
@@ -225,12 +274,13 @@ class Peer:
             if not isinstance(name,str) or len(name)>80:raise ProtocolError('Nome do computador inválido.')
             self.event('permanent_profile',{'profile':token,'name':name})
         elif kind=="input" and self.role=="host" and self.permissions.get("control",False):
-            self.backend.input(msg)
+            self.apply_input(msg)
         elif kind=="permissions" and self.role=="viewer":
             values=msg.get("values",{})
             if not isinstance(values,dict):raise ProtocolError("Permissões inválidas.")
             self.permissions={k:values.get(k) is True for k in ("control","clipboard","audio")}
             if not self.permissions.get('control'):self.features.revoke()
+            else:self.fast_input.negotiate()
             self.event("permissions",self.permissions)
         elif kind=="stats" and self.role=="viewer":
             values=msg.get("values",{})
@@ -381,7 +431,7 @@ class Peer:
 
     def close(self,reason="Sessão encerrada."):
         if self.closed.is_set():return
-        self.closed.set();self.input_dispatch.stop();self.fast_audio.stop();self.channel.close()
+        self.closed.set();self.input_dispatch.stop();self.fast_audio.stop();self.fast_input.stop();self.channel.close()
         self.features.revoke();self.recording_audio_sink=None
         if self.backend:self.backend.release()
         with self.transfer_lock:

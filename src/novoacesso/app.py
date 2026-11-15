@@ -58,7 +58,7 @@ class RemoteCanvas(QWidget):
         self._local_escape=True;self.exit_requested.emit()
     def __init__(self):
         super().__init__();self.image=None;self.allow_control=False;self.rect=QRectF();self.last_move=0;self.display_mode='fit';self.surface=None
-        self.pressed_buttons=set();self.remote_cursor_shape='arrow'
+        self.pressed_buttons=set();self.remote_cursor_shape='arrow';self.control_blocked=False
         self.pending_move=None;self.move_timer=QTimer(self);self.move_timer.setSingleShot(True);self.move_timer.setTimerType(Qt.TimerType.PreciseTimer);self.move_timer.timeout.connect(self.flush_move)
         self.transfer_enabled=False;self.setAcceptDrops(True)
         self.annotation_mode=False;self.annotation_shape='freehand';self.annotation_color='#ef443b';self.annotation_width=3;self.annotations=[];self.current_stroke=None
@@ -102,6 +102,9 @@ class RemoteCanvas(QWidget):
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         p.drawImage(self.rect,self.image)
         self.paint_annotations(p,self.rect)
+        if self.control_blocked:
+            p.fillRect(self.contentsRect(),QColor(15,18,22,210));p.setPen(QColor('#ffffff'));p.setFont(QFont('Segoe UI',14))
+            p.drawText(self.contentsRect().adjusted(24,24,-24,-24),Qt.AlignmentFlag.AlignCenter|Qt.TextFlag.TextWordWrap,'Windows remoto bloqueado ou em tela protegida\n\nEsta versão não controla a tela de senha.\nDesbloqueie diretamente na outra máquina.\n\nA sessão permanece conectada.')
         if self.hasFocus() and self.allow_control:
             p.setPen(QPen(QColor("#ef443b"),2));p.drawRect(self.contentsRect().adjusted(1,1,-2,-2))
 
@@ -722,9 +725,12 @@ class MainWindow(DeskShell,QMainWindow):
         if self.closing or self.manual_disconnect or self.peer or self.connecting or not self.auto_reconnect.isChecked():return
         self.remote_invite.setPlainText(self.reconnect_profile);self.connect_peer(retry=True)
     def control_changed(self):
-        self.canvas.allow_control=bool(self.peer and self.peer.role=="viewer" and self.peer.permissions.get("control") and self.control.isChecked())
+        blocked=bool(self.peer and getattr(self.peer,'control_state','desktop')=='protected')
+        self.canvas.control_blocked=blocked
+        self.canvas.allow_control=bool(self.peer and self.peer.role=="viewer" and self.peer.permissions.get("control") and self.control.isChecked() and not blocked)
         if self.peer and self.peer.role=='viewer':
-            self.control_hint.setText('Controle ativo. Clique na imagem remota para usar mouse e teclado.' if self.canvas.allow_control else 'Somente visualização. Marque Mouse e teclado.' if self.peer.permissions.get('control') else 'O computador remoto ainda precisa autorizar mouse e teclado em Nova conexão.')
+            self.control_hint.setText('O Windows remoto está bloqueado ou em uma tela protegida. Esta versão não permite digitar a senha nessa tela. Desbloqueie diretamente no computador remoto.' if blocked else 'Controle ativo. Clique na imagem remota para usar mouse e teclado.' if self.canvas.allow_control else 'Somente visualização. Marque Mouse e teclado.' if self.peer.permissions.get('control') else 'O computador remoto ainda precisa autorizar mouse e teclado em Nova conexão.')
+            if getattr(self.peer,'control_state','desktop')=='denied':self.control_hint.setText('O Windows remoto recusou a entrada. Uma janela com privilégios elevados pode exigir suporte de serviço, ainda indisponível nesta versão.')
         elif self.peer:self.control_hint.setText('Você está compartilhando. As permissões podem ser retiradas em Nova conexão.')
         if not self.canvas.allow_control:self.send_input(dict(event="release"))
         self.canvas.update_remote_cursor();self.canvas.update()
@@ -809,6 +815,11 @@ class MainWindow(DeskShell,QMainWindow):
                 if data.get('text'):self.activity.setText(data['text'])
         elif name=="frame":self.canvas.set_frame(data)
         elif name=='cursor':self.canvas.update_remote_cursor(data['shape'])
+        elif name=='control_state':
+            self.control_changed()
+            if data['state']=='protected':self.activity.setText('Controle suspenso pelo Windows remoto. A sessão continua conectada; desbloqueie diretamente na outra máquina.')
+            elif data['state']=='denied':self.activity.setText('O Windows recusou a entrada nesta janela. A conexão foi preservada.')
+            else:self.activity.setText('Área de trabalho remota disponível. O controle foi retomado conforme suas permissões.')
         elif name=='permanent_profile':
             self.available_profile=data['profile'];self.saved_profile.setPlainText(data['profile']);self.saved_name.setText(data['name'])
             from .saved_connections import remember_authorized
