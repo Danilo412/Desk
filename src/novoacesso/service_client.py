@@ -15,6 +15,34 @@ FRAME=struct.Struct('<8iHHI')
 SERVICE_KEY=r'SOFTWARE\DeskHost'
 BUTTONS={'left':0,'right':1,'middle':2,'back':3,'forward':4}
 
+def session_locked_flag(data,session_id):
+    # WTSINFOEXW is 64-bit aligned: Level, padding, Level1.SessionId,
+    # SessionState, SessionFlags. Never decode usernames or other fields.
+    if len(data)<20:return None
+    level,session,state,flags=struct.unpack_from('<I4xIIi',data)
+    if level!=1 or session!=session_id or flags not in (0,1):return None
+    return flags==0
+
+class WindowsSessionState:
+    def __init__(self):
+        self.api=ctypes.WinDLL('wtsapi32',use_last_error=True);self.kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+        self.api.WTSQuerySessionInformationW.argtypes=[wintypes.HANDLE,wintypes.DWORD,ctypes.c_int,ctypes.POINTER(ctypes.c_void_p),ctypes.POINTER(wintypes.DWORD)];self.api.WTSQuerySessionInformationW.restype=wintypes.BOOL
+        self.api.WTSFreeMemory.argtypes=[ctypes.c_void_p];self.api.WTSFreeMemory.restype=None
+        self.kernel.ProcessIdToSessionId.argtypes=[wintypes.DWORD,ctypes.POINTER(wintypes.DWORD)];self.kernel.ProcessIdToSessionId.restype=wintypes.BOOL
+        session=wintypes.DWORD();self.session=session.value if self.kernel.ProcessIdToSessionId(os.getpid(),ctypes.byref(session)) else None
+        self.lock=threading.Lock();self.next_check=0.;self.cached=None
+    def locked(self):
+        if self.session is None:return None
+        with self.lock:
+            now=time.monotonic()
+            if now<self.next_check:return self.cached
+            pointer=ctypes.c_void_p();size=wintypes.DWORD();self.next_check=now+.1;self.cached=None
+            if self.api.WTSQuerySessionInformationW(None,self.session,25,ctypes.byref(pointer),ctypes.byref(size)):
+                try:
+                    if 20<=size.value<=65536:self.cached=session_locked_flag(ctypes.string_at(pointer,20),self.session)
+                finally:self.api.WTSFreeMemory(pointer)
+            return self.cached
+
 def input_packet(value):
     kind=value.get('event')
     if kind=='release':return b'\x04\x05'
@@ -49,12 +77,16 @@ def installed_configuration():
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,SERVICE_KEY,0,winreg.KEY_READ|winreg.KEY_WOW64_64KEY) as key:
             result={name:winreg.QueryValueEx(key,name)[0] for name in ('OwnerSid','ClientPath','ClientHash','ServiceHash')}
+            try:result['TrustMode']=winreg.QueryValueEx(key,'TrustMode')[0]
+            except FileNotFoundError:result['TrustMode']='publisher'
         if any(not isinstance(v,str) for v in result.values()):return None
         for name in ('ClientHash','ServiceHash'):
             if len(result[name])!=64 or any(c not in '0123456789abcdef' for c in result[name]):return None
         if not result['OwnerSid'].startswith('S-1-5-21-') or not result['OwnerSid'][9:].replace('-','').isdigit():return None
         result['ServicePath']=str(Path(os.environ['ProgramFiles'])/'DeskHost/DeskHost.exe')
         if os.path.normcase(os.path.abspath(result['ClientPath']))!=os.path.normcase(os.path.abspath(sys.executable)):return None
+        if result['TrustMode'] not in ('publisher','fixed'):return None
+        if result['TrustMode']=='fixed' and hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()!=result['ClientHash']:return None
         # The service revalidates the running image's trusted publisher.
         # Do not disable it after an ordinary signed update of Desk.exe.
         return result

@@ -1,4 +1,10 @@
 #define BrokerRoot SourcePath + "bin"
+#if FileExists(SourcePath + "build-hashes.iss")
+  #include "build-hashes.iss"
+#else
+  #define ServiceExpectedHash ""
+  #define ClientExpectedHash ""
+#endif
 [Setup]
 AppId={{B6439583-F688-498A-A469-75DA14DBD88B}
 AppName=Desk - Serviço de tela de bloqueio
@@ -33,15 +39,23 @@ Filename: "{app}\DeskHost.exe"; Parameters: "--uninstall"; Flags: runhidden wait
 
 [Code]
 var ClientPage: TInputFileWizardPage;
+    ModePage: TInputOptionWizardPage;
 procedure InitializeWizard;
 begin
   ClientPage := CreateInputFilePage(wpWelcome, 'Desk que poderá usar o serviço',
-    'Selecione o Desk assinado instalado para o usuário que receberá o acesso.',
+    'Selecione o Desk instalado para o usuário que receberá o acesso.',
     'O serviço permite ver e controlar a tela bloqueada durante sessões autorizadas. ' +
     'Não inicia uma sessão remota sozinho e não armazena a senha do Windows. ' +
-    'Esta preparação só instala se o serviço e o Desk tiverem assinaturas confiáveis do mesmo editor.');
+    'Escolha a autorização por assinatura ou o vínculo pessoal de uma versão exata.');
   ClientPage.Add('Aplicativo Desk:', 'Desk|Desk.exe', '.exe');
   ClientPage.Values[0] := ExpandConstant('{localappdata}\Programs\Desk\Desk.exe');
+  ModePage := CreateInputOptionPage(ClientPage.ID, 'Autorização para este computador',
+    'O serviço inicia com o Windows e só atende sessões já autorizadas deste usuário.',
+    'Para distribuição, use assinaturas confiáveis do mesmo editor no Desk e no serviço. ' +
+    'Para teste pessoal sem certificado, você pode aprovar somente os dois arquivos exatos deste pacote. ' +
+    'O Windows continuará validando os programas. Uma atualização do Desk exigirá refazer o vínculo como administrador.', False, False);
+  ModePage.Add('Aprovar esta versão exata para teste pessoal (sem certificado)');
+  ModePage.Values[0] := False;
 end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
@@ -52,7 +66,7 @@ begin
   end;
 end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
-var ExitCode: Integer;
+var ExitCode: Integer; Parameters: String;
 begin
   Result := '';
   if CompareText(RemoveBackslashUnlessRoot(ExpandFileName(WizardDirValue)), ExpandConstant('{autopf}\DeskHost')) <> 0 then begin
@@ -63,20 +77,29 @@ begin
     Result := 'O serviço já está instalado. Remova a instalação anterior pelo Windows antes de instalar esta preparação.';
     Exit;
   end;
+  if ModePage.Values[0] then begin
+    if (Length('{#ServiceExpectedHash}') <> 64) or (Length('{#ClientExpectedHash}') <> 64) then begin
+      Result := 'O pacote não foi preparado com o vínculo das versões exatas. O serviço não foi instalado.';
+      Exit;
+    end;
+    Parameters := '--preflight-fixed {#ServiceExpectedHash} {#ClientExpectedHash} "' + ClientPage.Values[0] + '"';
+  end else Parameters := '--preflight "' + ClientPage.Values[0] + '"';
   ExtractTemporaryFile('DeskHost-Verify.exe');
   if not Exec(ExpandConstant('{tmp}\DeskHost-Verify.exe'),
-    '--preflight "' + ClientPage.Values[0] + '"', '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
-    Result := 'O Windows não permitiu verificar a assinatura. O serviço não foi instalado.'
+    Parameters, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+    Result := 'O Windows não permitiu verificar os arquivos. O serviço não foi instalado.'
   else if ExitCode <> 0 then
-    Result := 'Falta uma assinatura digital confiável e correspondente no serviço e no Desk. ' +
-      'Este pacote de preparação não ativa um serviço sem assinatura. Nada foi registrado no Windows.';
+    Result := 'A assinatura ou o vínculo das versões não foi validado. ' +
+      'Instale a versão exata do Desk deste pacote ou confira as assinaturas. Nada foi registrado no Windows.';
 end;
 procedure CurStepChanged(CurStep: TSetupStep);
-var ExitCode: Integer;
+var ExitCode: Integer; Parameters: String;
 begin
   if CurStep = ssPostInstall then begin
+    if ModePage.Values[0] then Parameters := '--install-fixed "' + ClientPage.Values[0] + '" {#ClientExpectedHash}'
+    else Parameters := '--install-client "' + ClientPage.Values[0] + '"';
     if not Exec(ExpandConstant('{app}\DeskHost.exe'),
-      '--install-client "' + ClientPage.Values[0] + '"', '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+      Parameters, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
       RaiseException('O Windows recusou o serviço. A instalação não está ativa.')
     else if ExitCode <> 0 then
       RaiseException('O serviço não foi autorizado ou não iniciou. Confira a assinatura e a conta proprietária do Desk.');

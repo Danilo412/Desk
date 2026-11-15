@@ -1,7 +1,7 @@
 import math,struct,threading,time
 from types import SimpleNamespace
 import pytest
-from novoacesso.service_client import BrokerClient,FRAME,decode_frame,input_packet
+from novoacesso.service_client import BrokerClient,FRAME,decode_frame,input_packet,session_locked_flag
 from novoacesso.desktop import DesktopBackend
 
 def test_input_protocol_includes_click_position_and_native_key_up():
@@ -93,3 +93,11 @@ def test_peer_gates_privileged_lease_on_host_control_permission_and_revocation()
     peer.set_permissions({'control':True});assert events==['begin']
     peer.set_permissions({'control':False});assert events==['begin','release','end']
     peer.close();assert events[-2:]==['end','release']
+
+@pytest.mark.parametrize('level,session,flag,expected',[(1,2,0,True),(1,2,1,False),(1,2,-1,None),(1,3,0,None),(2,2,0,None)])
+def test_session_lock_is_detected_even_when_lockapp_uses_default_desktop(level,session,flag,expected):
+    assert session_locked_flag(struct.pack('<I4xIIi',level,session,0,flag),2) is expected
+
+def test_locked_session_uses_protected_route_before_reading_default_desktop():
+    backend=DesktopBackend.__new__(DesktopBackend);backend.session_lock_probe=lambda:True
+    assert backend.local_desktop_state()=='protected'

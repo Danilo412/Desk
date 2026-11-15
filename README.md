@@ -105,6 +105,6 @@ Durante o controle, a captura MSS usa `with_cursor=False`, excluindo o cursor do
 
 ## Screen broker preview — 0.13.0
 
-This branch prepares a separate Windows service for capture and typed input on the lock desktop during an already-approved session. Production activation requires a trusted Authenticode publisher shared by the service and GUI, plus an administrative installation. The current development machine blocks the unsigned component; no privileged service has been installed or live-tested there. The ordinary stable installation remains separate.
+This branch prepares a separate Windows service for capture and typed input on protected desktops during an already-approved session. Distribution can use a trusted Authenticode publisher. A private pilot can instead explicitly bind the exact service/GUI versions in an administrator-owned installation. These IPC authorization hashes do not create Windows/WDAC exceptions; the binaries still must pass Windows checks. Every GUI update in fixed-version mode requires another administrative binding.
 
-See [the service trust boundary, build and validation requirements](native/DeskHost/README.md). The preview is not a claim that Windows sign-in, pre-login remote hosting or a live locked-PC test already works. Do not remove Windows security protections to test it.
+See [the trust boundary, setup and validation requirements](native/DeskHost/README.md). No privileged service has been activated by the build or protocol tests. Actual service installation and physical lock/unlock tests remain required. This is not a pre-login remote host and does not remove or store Windows passwords.

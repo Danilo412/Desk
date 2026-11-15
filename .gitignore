@@ -19,3 +19,5 @@ identity.dat
 erro-ao-abrir.txt
 
 native/DeskHost/bin/
+
+native/DeskHost/build-hashes.iss

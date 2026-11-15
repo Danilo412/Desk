@@ -104,7 +104,7 @@ class RemoteCanvas(QWidget):
         self.paint_annotations(p,self.rect)
         if self.control_blocked:
             p.fillRect(self.contentsRect(),QColor(15,18,22,210));p.setPen(QColor('#ffffff'));p.setFont(QFont('Segoe UI',14))
-            p.drawText(self.contentsRect().adjusted(24,24,-24,-24),Qt.AlignmentFlag.AlignCenter|Qt.TextFlag.TextWordWrap,'Windows remoto bloqueado ou em tela protegida\n\nO serviço de tela de bloqueio não está disponível nesta sessão.\nVerifique a instalação assinada na outra máquina\nou desbloqueie diretamente nela.\n\nA sessão permanece conectada.')
+            p.drawText(self.contentsRect().adjusted(24,24,-24,-24),Qt.AlignmentFlag.AlignCenter|Qt.TextFlag.TextWordWrap,'Windows remoto bloqueado ou em tela protegida\n\nO serviço de tela de bloqueio não está disponível nesta sessão.\nVerifique a instalação e a autorização na outra máquina\nou desbloqueie diretamente nela.\n\nA sessão permanece conectada.')
         if self.hasFocus() and self.allow_control:
             p.setPen(QPen(QColor("#ef443b"),2));p.drawRect(self.contentsRect().adjusted(1,1,-2,-2))
 
@@ -729,8 +729,8 @@ class MainWindow(DeskShell,QMainWindow):
         self.canvas.control_blocked=blocked
         self.canvas.allow_control=bool(self.peer and self.peer.role=="viewer" and self.peer.permissions.get("control") and self.control.isChecked() and not blocked)
         if self.peer and self.peer.role=='viewer':
-            self.control_hint.setText('O Windows remoto está bloqueado. O serviço assinado de tela de senha precisa estar instalado e autorizado na outra máquina.' if blocked else 'Controle ativo. Clique na imagem remota para usar mouse e teclado.' if self.canvas.allow_control else 'Somente visualização. Marque Mouse e teclado.' if self.peer.permissions.get('control') else 'O computador remoto ainda precisa autorizar mouse e teclado em Nova conexão.')
-            if getattr(self.peer,'control_state','desktop')=='denied':self.control_hint.setText('O Windows remoto recusou a entrada. Confira a permissão de controle e o serviço assinado no computador remoto.')
+            self.control_hint.setText('O Windows remoto está bloqueado. O serviço de tela de senha precisa estar instalado e autorizado na outra máquina.' if blocked else 'Controle ativo. Clique na imagem remota para usar mouse e teclado.' if self.canvas.allow_control else 'Somente visualização. Marque Mouse e teclado.' if self.peer.permissions.get('control') else 'O computador remoto ainda precisa autorizar mouse e teclado em Nova conexão.')
+            if getattr(self.peer,'control_state','desktop')=='denied':self.control_hint.setText('O Windows remoto recusou a entrada. Confira a permissão de controle e o serviço autorizado no computador remoto.')
         elif self.peer:self.control_hint.setText('Você está compartilhando. As permissões podem ser retiradas em Nova conexão.')
         if not self.canvas.allow_control:self.send_input(dict(event="release"))
         self.canvas.update_remote_cursor();self.canvas.update()

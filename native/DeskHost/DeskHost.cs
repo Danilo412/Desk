@@ -1,5 +1,6 @@
 // Desk privileged screen broker. No listener on TCP/UDP, no shell/file RPC,
-// no password API and no input logging. Production modes require Authenticode.
+// no password API and no input logging. Trust is an administrative publisher
+// pin or an explicit fixed-version pin; neither changes Windows app control.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -100,14 +101,18 @@ namespace DeskHost {
         [DataMember] public string ClientPath;
         [DataMember] public string ClientHash;
         [DataMember] public string Publisher;
+        [DataMember] public string TrustMode;
+        [DataMember] public string ServiceHash;
+        public bool FixedVersion {get{return TrustMode=="fixed";}}
         static string FilePath {get{return Path.Combine(Path.GetDirectoryName(Trust.Exe),"service.json");}}
         public string Pipe {get{return "DeskHost."+OwnerSid;}}
         public static Config Load(){Trust.SafeRoot();Trust.CheckAcl(Path.GetDirectoryName(Trust.Exe),true);Trust.CheckAcl(Trust.Exe,false);Trust.CheckAcl(FilePath,false);using(FileStream s=File.OpenRead(FilePath)){Config c=(Config)new DataContractJsonSerializer(typeof(Config)).ReadObject(s);c.Validate();return c;}}
-        public void Validate(){SecurityIdentifier sid=new SecurityIdentifier(OwnerSid);if(!sid.IsAccountSid() || ClientHash==null || ClientHash.Length!=64 || !Path.IsPathRooted(ClientPath) || !String.Equals(Path.GetFileName(ClientPath),"Desk.exe",StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Configuration");ClientPath=Path.GetFullPath(ClientPath);if(!String.Equals(Trust.SignedPublisher(Trust.Exe),Publisher,StringComparison.OrdinalIgnoreCase))throw new UnauthorizedAccessException("Publisher");}
-        public static void Install(string sid,string client){
-            Trust.Admin();Trust.SafeRoot();string publisher=Trust.SignedPublisher(Trust.Exe);client=Path.GetFullPath(client);
-            if(!String.Equals(Trust.SignedPublisher(client),publisher,StringComparison.OrdinalIgnoreCase))throw new UnauthorizedAccessException("Matching trusted publisher required");
-            Config c=new Config();c.OwnerSid=new SecurityIdentifier(sid).Value;c.ClientPath=client;c.ClientHash=Trust.Hash(client);c.Publisher=publisher;c.Validate();
+        public void Validate(){SecurityIdentifier sid=new SecurityIdentifier(OwnerSid);if(!sid.IsAccountSid() || ClientHash==null || ClientHash.Length!=64 || ServiceHash==null || ServiceHash.Length!=64 || !Path.IsPathRooted(ClientPath) || !String.Equals(Path.GetFileName(ClientPath),"Desk.exe",StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Configuration");ClientPath=Path.GetFullPath(ClientPath);if(Trust.Hash(Trust.Exe)!=ServiceHash)throw new UnauthorizedAccessException("Service version");if(TrustMode!="fixed" && TrustMode!="publisher")throw new InvalidDataException("Trust mode");if(!FixedVersion && !String.Equals(Trust.SignedPublisher(Trust.Exe),Publisher,StringComparison.OrdinalIgnoreCase))throw new UnauthorizedAccessException("Publisher");}
+        public static void Install(string sid,string client,string expectedHash=null){
+            Trust.Admin();Trust.SafeRoot();bool fixedVersion=expectedHash!=null;client=Path.GetFullPath(client);string publisher="";
+            if(fixedVersion){if(expectedHash.Length!=64 || Trust.Hash(client)!=expectedHash)throw new UnauthorizedAccessException("Explicit client version required");}
+            else{publisher=Trust.SignedPublisher(Trust.Exe);if(!String.Equals(Trust.SignedPublisher(client),publisher,StringComparison.OrdinalIgnoreCase))throw new UnauthorizedAccessException("Matching trusted publisher required");}
+            Config c=new Config();c.OwnerSid=new SecurityIdentifier(sid).Value;c.ClientPath=client;c.ClientHash=Trust.Hash(client);c.Publisher=publisher;c.TrustMode=fixedVersion?"fixed":"publisher";c.ServiceHash=Trust.Hash(Trust.Exe);c.Validate();
             IntPtr scm=Native.OpenSCManager(null,null,3);if(scm==IntPtr.Zero)throw new System.ComponentModel.Win32Exception();
             try {IntPtr existing=Native.OpenService(scm,"DeskScreenBroker",0x10000|0x20|0x10|0x1);if(existing!=IntPtr.Zero){Native.CloseServiceHandle(existing);throw new InvalidOperationException("Remove existing service before replacing its protected files");}
                 if(Marshal.GetLastWin32Error()!=1060)throw new System.ComponentModel.Win32Exception();
@@ -121,14 +126,14 @@ namespace DeskHost {
                         acl.AddAccessRule(new RegistryAccessRule(admins,RegistryRights.FullControl,InheritanceFlags.ContainerInherit,PropagationFlags.None,AccessControlType.Allow));
                         acl.AddAccessRule(new RegistryAccessRule(system,RegistryRights.FullControl,InheritanceFlags.ContainerInherit,PropagationFlags.None,AccessControlType.Allow));
                         acl.AddAccessRule(new RegistryAccessRule(new SecurityIdentifier("S-1-5-32-545"),RegistryRights.ReadKey,InheritanceFlags.ContainerInherit,PropagationFlags.None,AccessControlType.Allow));key.SetAccessControl(acl);
-                        key.SetValue("ServiceHash",Trust.Hash(Trust.Exe));key.SetValue("OwnerSid",c.OwnerSid);key.SetValue("ClientHash",c.ClientHash);key.SetValue("ClientPath",c.ClientPath);
+                        key.SetValue("ServiceHash",c.ServiceHash);key.SetValue("OwnerSid",c.OwnerSid);key.SetValue("ClientHash",c.ClientHash);key.SetValue("ClientPath",c.ClientPath);key.SetValue("TrustMode",c.TrustMode);
                     }
                     if(!Native.StartService(service,0,IntPtr.Zero))throw new System.ComponentModel.Win32Exception();
                     using(ServiceController controller=new ServiceController("DeskScreenBroker"))controller.WaitForStatus(ServiceControllerStatus.Running,TimeSpan.FromSeconds(15));
                 }catch{Native.SERVICE_STATUS status;Native.ControlService(service,1,out status);Native.DeleteService(service);Registry.LocalMachine.DeleteSubKeyTree(@"SOFTWARE\DeskHost",false);throw;}finally{Native.CloseServiceHandle(service);}
             }finally{Native.CloseServiceHandle(scm);}
         }
-        public static void Remove(){Trust.Admin();Trust.SignedPublisher(Trust.Exe);IntPtr scm=Native.OpenSCManager(null,null,1);if(scm==IntPtr.Zero)throw new System.ComponentModel.Win32Exception();try{IntPtr service=Native.OpenService(scm,"DeskScreenBroker",0x10000|0x20|0x4);if(service==IntPtr.Zero){if(Marshal.GetLastWin32Error()!=1060)throw new System.ComponentModel.Win32Exception();}else{try{Native.SERVICE_STATUS status;Native.ControlService(service,1,out status);using(ServiceController controller=new ServiceController("DeskScreenBroker"))controller.WaitForStatus(ServiceControllerStatus.Stopped,TimeSpan.FromSeconds(15));if(!Native.DeleteService(service))throw new System.ComponentModel.Win32Exception();}finally{Native.CloseServiceHandle(service);}}Registry.LocalMachine.DeleteSubKeyTree(@"SOFTWARE\DeskHost",false);}finally{Native.CloseServiceHandle(scm);}}
+        public static void Remove(){Trust.Admin();Load();IntPtr scm=Native.OpenSCManager(null,null,1);if(scm==IntPtr.Zero)throw new System.ComponentModel.Win32Exception();try{IntPtr service=Native.OpenService(scm,"DeskScreenBroker",0x10000|0x20|0x4);if(service==IntPtr.Zero){if(Marshal.GetLastWin32Error()!=1060)throw new System.ComponentModel.Win32Exception();}else{try{Native.SERVICE_STATUS status;Native.ControlService(service,1,out status);using(ServiceController controller=new ServiceController("DeskScreenBroker"))controller.WaitForStatus(ServiceControllerStatus.Stopped,TimeSpan.FromSeconds(15));if(!Native.DeleteService(service))throw new System.ComponentModel.Win32Exception();}finally{Native.CloseServiceHandle(service);}}Registry.LocalMachine.DeleteSubKeyTree(@"SOFTWARE\DeskHost",false);}finally{Native.CloseServiceHandle(scm);}}
     }
 
     sealed class AgentProcess:IDisposable {
@@ -153,8 +158,9 @@ namespace DeskHost {
                 if(Native.ResumeThread(threadHandle)==UInt32.MaxValue)throw new System.ComponentModel.Win32Exception();Native.CloseHandle(threadHandle);threadHandle=IntPtr.Zero;toAgent.DisposeLocalCopyOfClientHandle();fromAgent.DisposeLocalCopyOfClientHandle();
             }catch{Dispose();throw;}finally{if(list!=IntPtr.Zero){Native.DeleteProcThreadAttributeList(list);Marshal.FreeHGlobal(list);}if(handles!=IntPtr.Zero)Marshal.FreeHGlobal(handles);if(primary!=IntPtr.Zero)Native.CloseHandle(primary);if(token!=IntPtr.Zero)Native.CloseHandle(token);}
         }
-        public byte[] Call(byte[] p){Wire.Validate(p);Wire.Write(toAgent,p,Wire.MaxRequest);return Wire.Read(fromAgent,Wire.MaxReply);}
-        public void Dispose(){if(toAgent!=null){toAgent.Dispose();toAgent=null;}if(fromAgent!=null){fromAgent.Dispose();fromAgent=null;}if(process!=IntPtr.Zero){if(Native.WaitForSingleObject(process,500)!=0)Native.TerminateProcess(process,20);Native.CloseHandle(process);process=IntPtr.Zero;}if(threadHandle!=IntPtr.Zero){Native.CloseHandle(threadHandle);threadHandle=IntPtr.Zero;}if(job!=IntPtr.Zero){Native.CloseHandle(job);job=IntPtr.Zero;}}
+        byte[] ReadBounded(AnonymousPipeServerStream stream,int count,Stopwatch timer,int timeout){byte[] data=new byte[count];int offset=0;while(offset<count){if(timer.ElapsedMilliseconds>timeout)throw new System.TimeoutException("Worker response");uint available;if(!Native.PeekNamedPipe(stream.SafePipeHandle,IntPtr.Zero,0,IntPtr.Zero,out available,IntPtr.Zero))throw new EndOfStreamException();if(available==0){Thread.Sleep(1);continue;}int read=stream.Read(data,offset,Math.Min(count-offset,(int)available));if(read==0)throw new EndOfStreamException();offset+=read;}return data;}
+        public byte[] Call(byte[] p){Wire.Validate(p);AnonymousPipeServerStream output=toAgent,input=fromAgent;if(output==null||input==null)throw new ObjectDisposedException("Worker");Wire.Write(output,p,Wire.MaxRequest);Stopwatch timer=Stopwatch.StartNew();int timeout=p[0]==3?5000:2000;byte[] header=ReadBounded(input,4,timer,timeout);uint size=BitConverter.ToUInt32(header,0);if(size<1||size>Wire.MaxReply)throw new InvalidDataException("Worker response size");return ReadBounded(input,(int)size,timer,timeout);}
+        public void Dispose(){AnonymousPipeServerStream output=Interlocked.Exchange(ref toAgent,null),input=Interlocked.Exchange(ref fromAgent,null);IntPtr child=Interlocked.Exchange(ref process,IntPtr.Zero),thread=Interlocked.Exchange(ref threadHandle,IntPtr.Zero),group=Interlocked.Exchange(ref job,IntPtr.Zero);if(output!=null)output.Dispose();if(input!=null)input.Dispose();if(child!=IntPtr.Zero){if(Native.WaitForSingleObject(child,500)!=0)Native.TerminateProcess(child,20);Native.CloseHandle(child);}if(thread!=IntPtr.Zero)Native.CloseHandle(thread);if(group!=IntPtr.Zero)Native.CloseHandle(group);}
     }
 
     sealed class Broker:ServiceBase {
@@ -180,7 +186,7 @@ namespace DeskHost {
                 uint session;if(!Native.ProcessIdToSessionId(pid,out session) || session!=Native.WTSGetActiveConsoleSessionId() || session==0)throw new UnauthorizedAccessException("Client session");
                 // Publisher/path/user/session pins survive ordinary signed
                 // GUI updates. A changed or unsigned publisher is rejected.
-                if(Trust.SignedPublisher(config.ClientPath)!=config.Publisher)throw new UnauthorizedAccessException("Client signature");
+                if(config.FixedVersion?Trust.Hash(config.ClientPath)!=config.ClientHash:Trust.SignedPublisher(config.ClientPath)!=config.Publisher)throw new UnauthorizedAccessException("Client authorization");
                 return session;
             }finally{Native.CloseHandle(process);}
         }
@@ -195,7 +201,7 @@ namespace DeskHost {
 
     sealed class DesktopAgent:IDisposable {
         IntPtr desktop=IntPtr.Zero;string desktopName="";Native.RECT selected,virtualRect;bool captured;HashSet<ushort> keys=new HashSet<ushort>();HashSet<byte> buttons=new HashSet<byte>();
-        public DesktopAgent(){Native.SetProcessDpiAwarenessContext(new IntPtr(-4));Native.AdjustTokenPrivilegesDisable();}
+        public DesktopAgent(){Native.SetProcessDpiAwarenessContext(new IntPtr(-4));Native.SetThreadDpiAwarenessContext(new IntPtr(-4));Native.AdjustTokenPrivilegesDisable();}
         bool Attach(){
             IntPtr next=Native.OpenInputDesktop(0,false,0x1|0x2|0x40|0x80|0x100);if(next==IntPtr.Zero)return false;
             StringBuilder name=new StringBuilder(256);uint needed;
@@ -246,7 +252,7 @@ namespace DeskHost {
         public static void Run(string readHandle,string writeHandle,uint parent,uint session){
             if(!Trust.IsSystem || Process.GetCurrentProcess().SessionId!=(int)session || session==0)throw new UnauthorizedAccessException("System agent required");
             using(Process owner=Process.GetProcessById((int)parent)){if(!String.Equals(owner.MainModule.FileName,Trust.Exe,StringComparison.OrdinalIgnoreCase))throw new UnauthorizedAccessException("Broker parent");}
-            Trust.SignedPublisher(Trust.Exe);
+            Config.Load();
             using(AnonymousPipeClientStream input=new AnonymousPipeClientStream(PipeDirection.In,readHandle))using(AnonymousPipeClientStream output=new AnonymousPipeClientStream(PipeDirection.Out,writeHandle))using(DesktopAgent desktop=new DesktopAgent()){
                 while(true){byte[] p;try{p=Wire.Read(input,Wire.MaxRequest);}catch(EndOfStreamException){break;}byte[] reply;try{reply=desktop.Handle(p);}catch{reply=new byte[]{1};}Wire.Write(output,reply,Wire.MaxReply);}
             }
@@ -298,6 +304,7 @@ namespace DeskHost {
         [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)]public static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string text,uint revision,out IntPtr descriptor,out uint size);
         [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]public static extern IntPtr CreateNamedPipe(string name,uint open,uint mode,uint instances,uint output,uint input,uint timeout,ref SECURITY_ATTRIBUTES security);
         [DllImport("kernel32.dll",SetLastError=true)]public static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe,out uint pid);
+        [DllImport("kernel32.dll",SetLastError=true)]public static extern bool PeekNamedPipe(SafePipeHandle pipe,IntPtr buffer,uint size,IntPtr read,out uint available,IntPtr remaining);
         [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)]public static extern IntPtr OpenSCManager(string machine,string database,uint access);
         [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)]public static extern IntPtr OpenService(IntPtr manager,string name,uint access);
         [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)]public static extern IntPtr CreateService(IntPtr manager,string name,string display,uint access,uint type,uint start,uint error,string binary,string group,IntPtr tag,string dependencies,string account,string password);
@@ -310,6 +317,7 @@ namespace DeskHost {
         [DllImport("user32.dll",SetLastError=true)]public static extern bool CloseDesktop(IntPtr desktop);
         [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true,EntryPoint="GetUserObjectInformationW")]public static extern bool GetUserObjectInformation(IntPtr handle,int info,StringBuilder buffer,uint size,out uint needed);
         [DllImport("user32.dll")]public static extern bool SetProcessDpiAwarenessContext(IntPtr context);
+        [DllImport("user32.dll")]public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
         [DllImport("user32.dll")]public static extern int GetSystemMetrics(int index);
         [DllImport("user32.dll",SetLastError=true)]public static extern bool EnumDisplayMonitors(IntPtr dc,IntPtr clip,MonitorEnum callback,IntPtr data);
         [DllImport("user32.dll")]public static extern IntPtr GetDC(IntPtr window);
@@ -340,6 +348,8 @@ namespace DeskHost {
             Native.RECT left=new Native.RECT();left.Left=-1920;left.Top=0;left.Right=0;left.Bottom=1080;Native.RECT all=left;all.Right=1920;
             int[] start=DesktopAgent.Project(left,all,0,0),end=DesktopAgent.Project(left,all,1,1);
             if(start[0]!=0 || start[1]!=0 || end[0]<32740 || end[0]>32780 || end[1]!=65535)throw new Exception("Physical multi-monitor coordinates");tests++;
+            Config c=new Config();c.OwnerSid=WindowsIdentity.GetCurrent().User.Value;c.ClientPath=Path.Combine(Path.GetTempPath(),"Desk.exe");c.ClientHash=new String('0',64);c.ServiceHash=Trust.Hash(Trust.Exe);c.TrustMode="fixed";c.Validate();tests++;
+            c.ServiceHash=new String('0',64);try{c.Validate();throw new Exception("Changed service accepted");}catch(UnauthorizedAccessException){tests++;}
             Console.WriteLine("{\"passed\":true,\"tests\":"+tests+",\"privileged_actions\":false}");return 0;
         }
         static int Main(string[] args){try{
@@ -348,10 +358,12 @@ namespace DeskHost {
                 if(args.Length==5 && args[0]=="--agent"){DesktopAgent.Run(args[1],args[2],UInt32.Parse(args[3]),UInt32.Parse(args[4]));return 0;}
                 if(args.Length==3 && args[0]=="--install"){Config.Install(args[1],args[2]);return 0;}
                 if(args.Length==2 && args[0]=="--preflight"){string publisher=Trust.SignedPublisher(Trust.Exe);if(Trust.SignedPublisher(args[1])!=publisher)throw new UnauthorizedAccessException("Matching publisher required");return 0;}
+                if(args.Length==4 && args[0]=="--preflight-fixed"){if(args[1].Length!=64 || args[2].Length!=64 || Trust.Hash(Trust.Exe)!=args[1] || Trust.Hash(args[3])!=args[2] || !String.Equals(Path.GetFileName(args[3]),"Desk.exe",StringComparison.OrdinalIgnoreCase))throw new UnauthorizedAccessException("Explicit package versions required");return 0;}
                 if(args.Length==2 && args[0]=="--install-client"){Trust.Admin();string sid=((SecurityIdentifier)File.GetAccessControl(args[1]).GetOwner(typeof(SecurityIdentifier))).Value;Config.Install(sid,args[1]);return 0;}
+                if(args.Length==3 && args[0]=="--install-fixed"){Trust.Admin();string sid=((SecurityIdentifier)File.GetAccessControl(args[1]).GetOwner(typeof(SecurityIdentifier))).Value;Config.Install(sid,args[1],args[2]);return 0;}
                 if(args.Length==1 && args[0]=="--uninstall"){Config.Remove();return 0;}
-                Console.Error.WriteLine("DeskHost requires a signed administrative installation. --self-test never touches the desktop.");return 2;
-            }catch(Exception error){Console.Error.WriteLine("DeskHost: "+error.GetType().Name+". Signing, installation or service authorization is unavailable.");return 20;}
+                Console.Error.WriteLine("DeskHost requires an administrator-approved publisher or fixed-version installation. --self-test never touches the desktop.");return 2;
+            }catch(Exception error){Console.Error.WriteLine("DeskHost: "+error.GetType().Name+". Installation or service authorization is unavailable.");return 20;}
         }
     }
 }

@@ -9,15 +9,24 @@ running in the owner's console session after that user's first login.
 
 ## Trust and installation
 
-The broker and the GUI must have valid, chain-trusted **Authenticode** signatures
-from the same pinned signing certificate. A Microsoft Store signature on an
-MSIX alone does not satisfy this standalone EXE installer. Store distribution
-of LocalSystem packaged services additionally requires approval of restricted
-capabilities. Production installation and service modes reject missing trust.
-No development certificate or trust-store exception is installed by this code.
+The default distribution mode requires valid, chain-trusted **Authenticode**
+signatures from the same pinned certificate. A Microsoft Store signature on
+an MSIX alone does not sign this standalone EXE installer. Store distribution
+of LocalSystem services additionally requires restricted-capability approval.
+
+For a private pilot, an administrator may explicitly select **fixed-version**
+mode. The installer verifies the exact service and GUI hashes embedded in the
+prepared package before copying files. The protected installation binds that
+GUI path, user SID and exact file hash, and also pins the service image hash.
+Every new GUI connection is checked against that binding. Updating the GUI
+requires a new administrative binding; it is deliberately not a publisher-wide
+grant. These are application IPC authorization pins, **not Windows/WDAC allow
+rules**. They never make a file that Windows blocks execute. SAC, Defender,
+UAC and Windows authentication remain in force. No development certificate,
+trusted-root entry, security exclusion or OS policy exception is installed.
 
 The administrative installer uses a protected, fixed `%ProgramFiles%\DeskHost`
-directory. It verifies both signatures **before copying service files**. The
+directory. It verifies the selected trust mode **before copying service files**. The
 native installer derives the authorized user's SID from the installed GUI's
 owner; the service image, configuration and registry metadata are writable only
 by Administrators and SYSTEM. Installing or enabling it needs the PC owner's
@@ -26,11 +35,13 @@ service or claim a live lock-screen test passed before it actually does.
 
 The local byte pipe rejects remote connections and admits only SYSTEM and the
 configured user. The broker checks the caller's process ID, exact GUI path,
-user SID, active console session and trusted publisher. The GUI verifies the
+user SID, active console session and either the trusted publisher or exact GUI
+hash. The GUI verifies the
 server's SYSTEM token, session zero, exact protected path and installed image
-hash before sending anything. Signed GUI updates at the pinned path and with
-the same certificate remain supported; a certificate change requires a new
-administrative service binding.
+hash before sending anything. In publisher mode, signed GUI updates with the
+same certificate remain supported. In fixed-version mode, **every GUI update**
+requires a new administrative binding. A certificate/service change requires
+administrative approval in either mode.
 
 ## Privileged worker
 
@@ -55,11 +66,13 @@ connections. The client uses cancellable, bounded pipe I/O.
 Build for x64 with the .NET Framework C# compiler and reference
 `System.ServiceProcess.dll` and `System.Runtime.Serialization.dll`.
 `--self-test` validates framing, bounds and native layouts without accessing
-the desktop or SCM. `--service`, `--agent` and `--install-client` are production
-modes with the trust and identity checks above. A blocked self-test must be
+the desktop or SCM. `--preflight-fixed` only compares explicit package hashes;
+it does not authorize a service or modify the system. `--service`, `--agent`,
+`--install-client` and `--install-fixed` enforce the checks above. A blocked self-test must be
 reported, not run through another runtime as a security workaround.
 
-Before public activation, complete trusted signing, an administrative install
-and physical tests for lock/unlock, keyboard layouts, multi-monitor/DPI, held
+Before production distribution, complete trusted signing. Before activating a
+private pilot, obtain explicit administrative approval of the exact components.
+Then complete physical tests for lock/unlock, keyboard layouts, multi-monitor/DPI, held
 keys during disconnect, permission revocation and service stop. Keep the
 previous working Desk installation available until those checks pass.

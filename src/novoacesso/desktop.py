@@ -26,8 +26,8 @@ class CursorInfo(ctypes.Structure):
 class DesktopBackend:
     def __init__(self):
         self.lock=threading.RLock();self.rect=None;self.virtual_rect=None;self.keys=set();self.buttons=set()
-        from .service_client import BrokerClient
-        self.secure=BrokerClient()
+        from .service_client import BrokerClient,WindowsSessionState
+        self.secure=BrokerClient();self.session_lock_probe=WindowsSessionState().locked
         self.user=ctypes.WinDLL("user32",use_last_error=True)
         self.user.SendInput.argtypes=[ctypes.c_uint,ctypes.POINTER(NativeInput),ctypes.c_int];self.user.SendInput.restype=ctypes.c_uint
         self.user.GetSystemMetrics.argtypes=[ctypes.c_int];self.user.GetSystemMetrics.restype=ctypes.c_int
@@ -67,6 +67,8 @@ class DesktopBackend:
 
     def local_desktop_state(self):
         # Read only: never switches desktop or changes its permissions.
+        probe=getattr(self,'session_lock_probe',None)
+        if probe and probe() is True:return 'protected'
         desktop=self.user.OpenInputDesktop(0,False,1)
         if not desktop:return 'protected'
         try:
