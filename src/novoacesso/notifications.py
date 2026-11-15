@@ -55,6 +55,7 @@ class NotificationCenter(QObject):
         if self.toast and expected==self.last_kind:self.toast.hide()
     def open_destination(self):
         self.bring_forward()
+        if self.destination=='updates':self.window.open_update_settings();self.window.updates.show_offer()
         if self.destination in ('chat','files') and self.window.peer:self.window.open_session_panel(0 if self.destination=='chat' else 1)
         if self.toast:self.toast.hide()
     def incoming(self,kind,data):

@@ -98,16 +98,21 @@ class RemoteCanvas(QWidget):
             p.setPen(QColor("#aaaaaa"));p.setFont(QFont("Segoe UI",13))
             p.drawText(self.contentsRect(),Qt.AlignmentFlag.AlignCenter,"A tela remota aparece aqui\nquando a conexão for aprovada.")
             return
-        size=self.image.size() if self.display_mode=='original' else self.image.size().scaled(self.size(),Qt.AspectRatioMode.IgnoreAspectRatio if self.display_mode=='stretch' else Qt.AspectRatioMode.KeepAspectRatio)
-        self.rect=QRectF((self.width()-size.width())/2,(self.height()-size.height())/2,size.width(),size.height())
+        self.rect=self.image_rect()
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         p.drawImage(self.rect,self.image)
         self.paint_annotations(p,self.rect)
         if self.hasFocus() and self.allow_control:
             p.setPen(QPen(QColor("#ef443b"),2));p.drawRect(self.contentsRect().adjusted(1,1,-2,-2))
 
+    def image_rect(self):
+        if self.image is None:return QRectF()
+        size=self.image.size() if self.display_mode=='original' else self.image.size().scaled(self.size(),Qt.AspectRatioMode.IgnoreAspectRatio if self.display_mode=='stretch' else Qt.AspectRatioMode.KeepAspectRatio)
+        return QRectF((self.width()-size.width())/2,(self.height()-size.height())/2,size.width(),size.height())
+
     def point(self,event,clamp=False):
         pos=event.position()
+        self.rect=self.image_rect()
         if not self.image or self.rect.isEmpty() or (not clamp and not self.rect.contains(pos)) or not self.allow_control:return None
         return dict(x=min(1,max(0,(pos.x()-self.rect.x())/self.rect.width())),y=min(1,max(0,(pos.y()-self.rect.y())/self.rect.height())))
 
@@ -217,6 +222,7 @@ class RemoteCanvas(QWidget):
         self.update()
 
     def annotation_point(self,event):
+        self.rect=self.image_rect()
         if self.image is None or not self.rect.contains(event.position()) or self.rect.isEmpty():return None
         return [(event.position().x()-self.rect.x())/self.rect.width(),(event.position().y()-self.rect.y())/self.rect.height()]
 

@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import secrets
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -82,10 +83,12 @@ def _open(url):
 
 def check_update(current_version,opener=_open):
     try:
-        with opener(MANIFEST_URL) as response:data=response.read(MAX_MANIFEST+1)
+        # GitHub's latest redirect can briefly retain the preceding release
+        # after publication. A fresh query avoids reporting that stale result.
+        with opener(MANIFEST_URL+'?desk_check='+secrets.token_hex(8)) as response:data=response.read(MAX_MANIFEST+1)
         return verify_manifest(data,current_version)
     except urllib.error.HTTPError as error:
-        if error.code==404:return None
+        if error.code==404:raise UpdateError('O aviso de atualização ainda não está disponível no canal oficial. Tente novamente ou abra a página de versões.') from error
         raise UpdateError('Não foi possível consultar as atualizações agora.') from error
     except UpdateError:raise
     except Exception as error:raise UpdateError('Sem resposta do serviço de atualização. Tente novamente mais tarde.') from error

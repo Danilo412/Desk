@@ -90,3 +90,9 @@ A fluidez, o atraso e a fidelidade ainda dependem da rede, das máquinas e da es
 O áudio usa um canal RTC independente, sem retransmissões de som atrasado, quando as duas pontas negociam esse recurso. Uma chave ChaCha20-Poly1305 aleatória e um prefixo de nonce são trocados dentro da sessão TLS já autenticada e aprovada. Contadores de 64 bits não se repetem por chave; pacotes sem autenticação ou repetidos são descartados. A chave não é gravada. Clientes anteriores mantêm o transporte TLS existente. O receptor revalida a permissão de áudio a cada pacote.
 
 Referências de implementação: [FFmpeg](https://ffmpeg.org/ffmpeg-codecs.html), [aiortc](https://aiortc.readthedocs.io/en/stable/api.html), [AEAD](https://cryptography.io/en/latest/hazmat/primitives/aead/), [SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput).
+
+## Mouse e atualizações — 0.12.4
+
+A normalização SendInput usa a geometria física guardada pela captura, em um contexto de thread que evita virtualização por DPI. A escala lógica retornada por outra API não é misturada com pixels físicos. A conversão no cliente usa a geometria atual da imagem em vez do último retângulo pintado. Isso corrige cliques deslocados após redimensionar, alternar tela cheia ou usar monitores com escalas diferentes.
+
+Configurações > Atualizações mostra a versão instalada, o estado da busca e o horário. Avisos de novas versões abrem essa página e a oferta de download. A consulta do manifesto evita reutilizar um redirecionamento antigo do GitHub, e um canal sem manifesto não é informado como uma instalação atualizada. Assinatura Ed25519, limites de origem, integridade e verificações do Windows são mantidos.

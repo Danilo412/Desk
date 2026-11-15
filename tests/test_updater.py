@@ -99,3 +99,37 @@ def test_windows_block_keeps_current_desk_open(tmp_path,monkeypatch):
     finally:
         if c.dialog:c.dialog.close()
         window.close();QApplication.processEvents()
+
+def test_missing_published_manifest_is_not_reported_as_already_current():
+    from urllib.error import HTTPError
+    def missing(url):raise HTTPError(url,404,'missing',{},None)
+    with pytest.raises(updater.UpdateError,match='ainda não está disponível'):updater.check_update('0.12.3',opener=missing)
+
+def test_each_manifest_check_refreshes_redirect_and_still_requires_signature(signed,monkeypatch):
+    _,_,public,encode=signed;urls=[];original=updater.verify_manifest
+    monkeypatch.setattr(updater,'verify_manifest',lambda data,version:original(data,version,public))
+    def response(url):urls.append(url);return io.BytesIO(encode())
+    assert updater.check_update('0.12.0',response).version=='0.12.1'
+    assert updater.check_update('0.12.0',response).version=='0.12.1'
+    assert urls[0]!=urls[1] and all(url.startswith(updater.MANIFEST_URL+'?desk_check=') for url in urls)
+
+def test_update_page_shows_installed_version_result_and_clickable_notification(tmp_path,monkeypatch):
+    from novoacesso.app import MainWindow
+    from novoacesso import __version__
+    from PySide6.QtWidgets import QApplication,QLabel
+    monkeypatch.setenv('NOVOACESSO_STATE_DIR',str(tmp_path));window=MainWindow();controller=window.updates
+    try:
+        window.open_update_settings();assert window.settings_navigation.currentItem().text()=='Atualizações'
+        controller.on_checked(None,'',False)
+        assert __version__ in window.update_status_label.text() and 'Última verificação:' in window.update_last_check.text()
+        update=updater.Update('0.12.5','url','0'*64,1024,'Teste')
+        controller.on_checked(update,'',False)
+        assert window.update_offer_button.isVisibleTo(window.settings_page) and '0.12.5' in window.update_status_label.text()
+        assert window.notifications.destination=='updates' and window.notifications.toast.isVisible()
+        window.notifications.open_destination();assert controller.dialog and any('Desk 0.12.5 disponível' in label.text() for label in controller.dialog.findChildren(QLabel))
+        controller.dialog.close();QApplication.processEvents()
+        controller.on_checked(None,'Sem resposta do serviço de atualização.',False)
+        assert 'Sem resposta' in window.update_status_label.text()
+    finally:
+        if controller.dialog:controller.dialog.close()
+        window.close();QApplication.processEvents()

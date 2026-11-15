@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 import threading
+from contextlib import contextmanager
 from PIL import Image
 import mss
 
@@ -24,10 +25,20 @@ class CursorInfo(ctypes.Structure):
 
 class DesktopBackend:
     def __init__(self):
-        self.lock=threading.RLock();self.rect=None;self.keys=set();self.buttons=set()
+        self.lock=threading.RLock();self.rect=None;self.virtual_rect=None;self.keys=set();self.buttons=set()
         self.user=ctypes.WinDLL("user32",use_last_error=True)
         self.user.SendInput.argtypes=[ctypes.c_uint,ctypes.POINTER(NativeInput),ctypes.c_int];self.user.SendInput.restype=ctypes.c_uint
         self.user.GetSystemMetrics.argtypes=[ctypes.c_int];self.user.GetSystemMetrics.restype=ctypes.c_int
+        if hasattr(self.user,'SetThreadDpiAwarenessContext'):
+            self.user.SetThreadDpiAwarenessContext.argtypes=[ctypes.c_void_p];self.user.SetThreadDpiAwarenessContext.restype=ctypes.c_void_p
+
+    @contextmanager
+    def physical_coordinates(self):
+        setter=getattr(getattr(self,'user',None),'SetThreadDpiAwarenessContext',None)
+        previous=setter(ctypes.c_void_p(-4)) if setter else None
+        try:yield
+        finally:
+            if previous:setter(previous)
 
     def _emit(self,event):
         if self.user.SendInput(1,ctypes.byref(event),ctypes.sizeof(NativeInput))!=1:
@@ -35,7 +46,9 @@ class DesktopBackend:
     def _mouse(self,flags,data=0,x=None,y=None):
         event=NativeInput();event.type=0;event.mi.dwFlags=flags;event.mi.mouseData=data&0xffffffff
         if x is not None:
-            left,top,width,height=[self.user.GetSystemMetrics(i) for i in (76,77,78,79)]
+            virtual=getattr(self,'virtual_rect',None)
+            if virtual:left,top,width,height=[virtual[k] for k in ('left','top','width','height')]
+            else:left,top,width,height=[self.user.GetSystemMetrics(i) for i in (76,77,78,79)]
             if width<2 or height<2:raise RuntimeError('Dimensões da área de trabalho indisponíveis.')
             event.mi.dx=max(0,min(65535,round((x-left)*65535/(width-1))));event.mi.dy=max(0,min(65535,round((y-top)*65535/(height-1))))
             event.mi.dwFlags|=0x8000|0x4000|0x2000|0x1
@@ -44,7 +57,7 @@ class DesktopBackend:
         event=NativeInput();event.type=1;event.ki.wVk=vk;event.ki.dwFlags=(0 if down else 2)|(1 if vk in EXTENDED_KEYS else 0);self._emit(event)
 
     def monitors(self):
-        with mss.MSS() as source:return [dict(m) for m in source.monitors]
+        with self.physical_coordinates(),mss.MSS() as source:return [dict(m) for m in source.monitors]
 
     def capture_source(self):
         from .capture import CaptureSource
@@ -59,10 +72,13 @@ class DesktopBackend:
         return self._cursor_shapes.get(info.hCursor,'arrow') if self.user.GetCursorInfo(ctypes.byref(info)) and info.flags&1 else 'arrow'
 
     def capture(self,source,index,width):
+        with self.physical_coordinates():return self._capture_physical(source,index,width)
+
+    def _capture_physical(self,source,index,width):
         monitors=source.monitors
         if not 0<=index<len(monitors):index=1 if len(monitors)>1 else 0
         rect=monitors[index]
-        with self.lock:self.rect=dict(rect)
+        with self.lock:self.rect=dict(rect);self.virtual_rect=dict(monitors[0])
         if hasattr(source,'image'):image=source.image(index)
         else:
             shot=source.grab(rect);image=Image.frombytes("RGB",shot.size,shot.bgra,'raw','BGRX')
@@ -72,7 +88,7 @@ class DesktopBackend:
         return image
 
     def input(self,data):
-        with self.lock:
+        with self.lock,self.physical_coordinates():
             kind=data.get("event")
             if kind in ("move","button"):
                 x,y=data.get("x"),data.get("y")
@@ -96,7 +112,7 @@ class DesktopBackend:
             elif kind=="release":self.release()
 
     def release(self):
-        with self.lock:
+        with self.lock,self.physical_coordinates():
             for key in self.keys:
                 try:self._key(key,False)
                 except OSError:pass

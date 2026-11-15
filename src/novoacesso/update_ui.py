@@ -1,6 +1,7 @@
 """Non-modal update discovery, with local confirmation before installation."""
 import os
 import threading
+from datetime import datetime
 from pathlib import Path
 from PySide6.QtCore import QObject,Signal,QTimer,Qt
 from PySide6.QtWidgets import QDialog,QVBoxLayout,QLabel,QPushButton,QHBoxLayout,QProgressBar
@@ -14,6 +15,7 @@ class UpdateController(QObject):
     def __init__(self,window):
         super().__init__(window);self.window=window;self.available=None;self.checking=False;self.downloading=False
         self.cancel=threading.Event();self.dialog=None;self.download_path=None;self.installation=updater.installed_directory()
+        self.notified_version=None
         self.checked.connect(self.on_checked);self.downloaded.connect(self.on_downloaded);self.progress.connect(self.on_progress)
         self.timer=QTimer(self);self.timer.setInterval(5*60*1000);self.timer.timeout.connect(self.check)
         if self.installation and os.environ.get('NOVOACESSO_OFFLINE')!='1':
@@ -24,6 +26,7 @@ class UpdateController(QObject):
             if manual:self.window.notice('A busca de atualizações está desativada neste modo de teste.')
             return
         self.checking=True
+        self.window.update_check_button.setEnabled(False);self.window.update_status_label.setText('Consultando as versões publicadas…')
         if manual:self.window.statusBar().showMessage('Verificando atualizações…')
         def worker():
             result=None;error=''
@@ -35,15 +38,22 @@ class UpdateController(QObject):
     def on_checked(self,update,error,manual):
         self.checking=False
         if self.window.closing:return
+        self.window.update_check_button.setEnabled(True)
+        self.window.update_last_check.setText('Última verificação: '+datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S'))
         if error:
+            self.window.update_status_label.setText(error)
             if manual:self.window.notice(error)
             return
         self.available=update
         self.window.update_available_button.setVisible(update is not None)
         if update:self.window.update_available_button.setText('Atualizar · '+update.version)
+        self.window.update_offer_button.setVisible(update is not None)
+        self.window.update_status_label.setText('Desk '+update.version+' disponível para atualizar.' if update else 'Desk '+__version__+' instalado. Nenhuma versão mais nova foi encontrada no canal oficial.')
+        if update and self.notified_version!=update.version:
+            self.notified_version=update.version
+            self.window.notifications.notify('update','Atualização do Desk disponível','Desk '+update.version+' já pode ser baixado. Abra o Desk para conferir e instalar.',destination='updates')
         if manual:
             if update:self.show_offer()
-            else:self.window.notice('Você está usando a versão mais recente do Desk.')
     def busy(self):
         w=self.window
         def active(peer):

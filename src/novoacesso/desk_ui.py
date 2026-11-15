@@ -2,8 +2,8 @@
 from __future__ import annotations
 import os,time,socket,math
 from pathlib import Path
-from PySide6.QtCore import Qt,QTimer,QSize,QRectF,QEvent,QPointF,Signal
-from PySide6.QtGui import QIcon,QAction,QKeySequence,QShortcut,QPainter,QColor,QPen,QPolygonF,QLinearGradient
+from PySide6.QtCore import Qt,QTimer,QSize,QRectF,QEvent,QPointF,Signal,QUrl
+from PySide6.QtGui import QIcon,QAction,QKeySequence,QShortcut,QPainter,QColor,QPen,QPolygonF,QLinearGradient,QDesktopServices
 from PySide6.QtWidgets import (QWidget,QFrame,QLabel,QPushButton,QToolButton,QLineEdit,
     QPlainTextEdit,QCheckBox,QComboBox,QVBoxLayout,QHBoxLayout,QGridLayout,QTabWidget,
     QMenu,QApplication,QScrollArea,QListWidget,QListWidgetItem,QListView,QAbstractItemView,
@@ -195,7 +195,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         menu.addSeparator()
         for label,index in [('Sessão',1),('Gerenciar acessos salvos',3),('Configurações',2),('Sobre o Desk',4)]:
             a=menu.addAction(label);a.triggered.connect(lambda checked=False,i=index:self.tabs.setCurrentIndex(i))
-        menu.addAction('Verificar atualizações',lambda:self.updates.check(True))
+        menu.addAction('Verificar atualizações',lambda:self.open_update_settings(True))
         menu.addSeparator();menu.addAction('Sair do Desk',self.quit_application);more.setMenu(menu);line.addWidget(more)
         outer.addWidget(bar)
         self.tabs=QTabWidget();self.tabs.setObjectName('workspace');self.tabs.tabBar().hide();outer.addWidget(self.tabs,1)
@@ -383,9 +383,24 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         notifications.addWidget(hint('Mensagens mostram um aviso discreto. Pedidos de aceite abrem uma janela acima do Desk e continuam dependendo da sua confirmação.'))
         notifications.addWidget(action_button('Testar mensagem em 5 segundos',lambda:QTimer.singleShot(5000,self.notifications.test_message)),0,Qt.AlignmentFlag.AlignLeft)
         notifications.addWidget(action_button('Testar solicitação em 5 segundos',lambda:QTimer.singleShot(5000,self.notifications.test_request)),0,Qt.AlignmentFlag.AlignLeft);notifications.addStretch()
-        for i,icon in enumerate(['connection','lock','monitor','monitor','settings','info']):self.settings_navigation.item(i).setIcon(QIcon(str(ASSETS/(icon+'.svg'))))
+        self.update_settings_index=self.settings_navigation.count();self.settings_navigation.addItem('Atualizações')
+        updates=section('Atualizações','Confira a versão instalada e receba as próximas versões sem reenviar o instalador.')
+        from . import __version__
+        updates.addWidget(hint('Versão instalada: Desk '+__version__))
+        self.update_status_label=hint('Ainda não foi feita uma verificação nesta execução.');updates.addWidget(self.update_status_label)
+        self.update_last_check=hint('');updates.addWidget(self.update_last_check)
+        self.update_check_button=action_button('Verificar atualizações agora',lambda:self.updates.check(True));updates.addWidget(self.update_check_button,0,Qt.AlignmentFlag.AlignLeft)
+        self.update_offer_button=action_button('Ver atualização disponível',lambda:self.updates.show_offer());self.update_offer_button.hide();updates.addWidget(self.update_offer_button,0,Qt.AlignmentFlag.AlignLeft)
+        updates.addWidget(action_button('Abrir página de versões',lambda:QDesktopServices.openUrl(QUrl('https://github.com/Danilo412/Desk/releases/latest'))),0,Qt.AlignmentFlag.AlignLeft)
+        updates.addWidget(hint('A busca é automática ao abrir e a cada cinco minutos. O download é conferido antes de instalar. Termine a sessão remota para aplicar a atualização; seu número e acessos salvos serão mantidos.'));updates.addStretch()
+        for i,icon in enumerate(['connection','lock','monitor','monitor','settings','info','download']):self.settings_navigation.item(i).setIcon(QIcon(str(ASSETS/(icon+'.svg'))))
         self.settings_navigation.currentRowChanged.connect(self.settings_pages.setCurrentIndex);self.settings_navigation.setCurrentRow(0)
-        self.tabs.addTab(page,'Configurações');self.refresh_trusted()
+        self.settings_page=page;self.tabs.addTab(page,'Configurações');self.refresh_trusted()
+
+    def open_update_settings(self,check=False):
+        if self._fullscreen:self.exit_fullscreen()
+        self.tabs.setCurrentWidget(self.settings_page);self.settings_navigation.setCurrentRow(self.update_settings_index)
+        if check:self.updates.check(True)
 
     def remote_address_changed(self):
         self.connect_button.setEnabled(bool(self.remote_invite.text().strip()) and not self.connecting and not self.peer)

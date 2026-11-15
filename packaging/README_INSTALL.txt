@@ -1,27 +1,21 @@
-DESK 0.12.3 — IMAGEM, SOM E CONTROLE
+DESK 0.12.4 — MOUSE E ATUALIZAÇÕES
 
-Atualize os dois computadores para obter todos os ganhos. No Desk já
-instalado, use o aviso Atualizar ou o menu Verificar atualizações.
-O número, as configurações, os favoritos e as autorizações são preservados.
+O clique usa as mesmas coordenadas físicas da captura, incluindo telas com
+escala de 125%, 150% e 200% e monitores posicionados à esquerda da tela principal.
+A posição da imagem é recalculada antes de cada entrada, mesmo depois de
+redimensionar ou entrar e sair da tela cheia. Atualize as DUAS pontas.
 
-IMAGEM
-O modo automático prioriza detalhes e reduz o ritmo dos quadros sob carga,
-sem baixar automaticamente a resolução ou reiniciar o vídeo com menos bits.
-Textos e áreas estáticas retornam à transmissão sem perda. Original exibe
-um pixel por pixel; Ajustar mantém as proporções dentro da janela.
-O limite escolhido não cria detalhes que não existem na tela de origem.
+ONDE ENCONTRAR ATUALIZAÇÕES
+Menu > Configurações > Atualizações, ou Menu > Verificar atualizações.
+A página mostra a versão instalada, o resultado e a hora da última busca.
+Quando houver uma versão nova, aparecerão um botão e um aviso no Desk.
+Clique para conferir e baixar; termine a sessão antes de instalar.
+Seu número, os favoritos, as autorizações e as configurações são preservados.
 
-SOM
-Com as duas pontas atualizadas: Opus estéreo, 48 kHz, blocos de 20 ms.
-Uma reserva curta absorve pequenas variações de entrega. A gravação MP4
-também mantém áudio estéreo de 48 kHz. Clientes antigos usam o áudio legado.
-O áudio do sistema depende da permissão concedida no PC acessado.
+Alternativa: use o instalador desta versão para atualizar o Desk já instalado.
+O pacote público não inclui credenciais privadas; instalações novas precisam
+da configuração de conexão usada nos seus computadores.
 
-CONTROLE
-O envio de comandos não bloqueia a interface. O movimento final do mouse,
-cliques, arrastos, rolagem e botões laterais são preservados em ordem.
-Nenhuma permissão de controle é concedida automaticamente por esta versão.
-
-A conexão depende da internet e dos serviços. A edição pública não contém
-credenciais particulares e preserva a configuração instalada. Uma instalação
-nova precisa da configuração de conexão. Os executáveis não têm Authenticode.
+Permanecem os recursos da 0.12.3, incluindo som estéreo de 48 kHz em canal
+independente quando ambas as pontas suportam e estão autorizadas.
+O programa continua sujeito às verificações normais de execução do Windows.
