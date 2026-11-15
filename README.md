@@ -76,3 +76,17 @@ Favoritos e recentes são consolidados por identidade/endereço, mantendo o aces
 A localização por número reaproveita a conexão de sinalização já aberta quando disponível. O pedido pode mostrar um aviso antecipado de preparação na outra ponta, antes da negociação da imagem. Esse aviso não aceita a sessão nem concede acesso. O primeiro aceite com a opção de reconexão autoriza somente a chave do dispositivo; revogação e permissões existentes são preservadas.
 
 Mensagens e arquivos recebidos mostram um aviso discreto; pedidos de conexão, destino de arquivo e ações que exigem confirmação trazem a janela do Desk e o diálogo para a frente. Configurações > Notificações permite ajustar avisos, prévias e foco e fazer um teste local. O Windows ainda pode limitar ativação de janelas, especialmente em áreas de trabalho protegidas.
+
+## Imagem, áudio e controle — 0.12.3
+
+O controle de carga preserva resolução e quantização, adaptando FPS em vez de diminuir a nitidez. O codificador usa o tempo real dos quadros e permanece aberto durante a restauração estática sem perda. Decodificar vídeo não bloqueia diretamente a leitura do áudio e das mensagens.
+
+As duas pontas negociam áudio Opus estéreo de 48 kHz em blocos de 20 ms, com reserva limitada para variações da rede. Clientes anteriores continuam usando o PCM legado. MP4 usa AAC estéreo a 48 kHz.
+
+Movimentos têm envio final garantido após a limitação de frequência; cliques e teclas mantêm a ordem em uma fila fora da interface. A entrada no Windows usa SendInput, com coordenadas da área de trabalho virtual e botões laterais. Os fragmentos enviados são menores e alternam áudio, vídeo e arquivos; os fragmentos antigos continuam aceitos. Essas mudanças não concedem nem ampliam permissões.
+
+A fluidez, o atraso e a fidelidade ainda dependem da rede, das máquinas e da escala de exibição. Não há promessa de qualidade idêntica ao AnyDesk nem de conexão sem interrupções.
+
+O áudio usa um canal RTC independente, sem retransmissões de som atrasado, quando as duas pontas negociam esse recurso. Uma chave ChaCha20-Poly1305 aleatória e um prefixo de nonce são trocados dentro da sessão TLS já autenticada e aprovada. Contadores de 64 bits não se repetem por chave; pacotes sem autenticação ou repetidos são descartados. A chave não é gravada. Clientes anteriores mantêm o transporte TLS existente. O receptor revalida a permissão de áudio a cada pacote.
+
+Referências de implementação: [FFmpeg](https://ffmpeg.org/ffmpeg-codecs.html), [aiortc](https://aiortc.readthedocs.io/en/stable/api.html), [AEAD](https://cryptography.io/en/latest/hazmat/primitives/aead/), [SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput).

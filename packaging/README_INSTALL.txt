@@ -1,24 +1,27 @@
-DESK 0.12.2 — AVISOS E CONEXÃO MAIS RÁPIDA
+DESK 0.12.3 — IMAGEM, SOM E CONTROLE
 
-Pedidos de conexão e recebimento de arquivos trazem o Desk e a confirmação
-para a frente. Mensagens e arquivos recebidos mostram um aviso discreto no
-canto da tela, mesmo com outro programa aberto. O aviso permite abrir a
-conversa ou os arquivos. Nenhum aviso aceita acesso ou arquivos sozinho.
-As opções e os testes estão em Configurações > Notificações.
+Atualize os dois computadores para obter todos os ganhos. No Desk já
+instalado, use o aviso Atualizar ou o menu Verificar atualizações.
+O número, as configurações, os favoritos e as autorizações são preservados.
 
-A busca por número pode reaproveitar a conexão com o serviço já aberta no
-Desk. O outro PC recebe um aviso de preparação antes da negociação da imagem.
-O tempo real depende da internet, dos PCs e da disponibilidade do serviço.
-As duas pontas precisam da 0.12.2 para os novos avisos antecipados.
+IMAGEM
+O modo automático prioriza detalhes e reduz o ritmo dos quadros sob carga,
+sem baixar automaticamente a resolução ou reiniciar o vídeo com menos bits.
+Textos e áreas estáticas retornam à transmissão sem perda. Original exibe
+um pixel por pixel; Ajustar mantém as proporções dentro da janela.
+O limite escolhido não cria detalhes que não existem na tela de origem.
 
-ACESSO SALVO
-No primeiro aceite, no PC acessado, marque “Permitir reconexões deste
-computador sem novo aceite”. Esse dispositivo é salvo por sua chave e poderá
-entrar novamente pelo favorito sem repetir o aceite. Deixe o Desk aberto no
-PC acessado. A autorização pode ser revogada em Configurações.
+SOM
+Com as duas pontas atualizadas: Opus estéreo, 48 kHz, blocos de 20 ms.
+Uma reserva curta absorve pequenas variações de entrega. A gravação MP4
+também mantém áudio estéreo de 48 kHz. Clientes antigos usam o áudio legado.
+O áudio do sistema depende da permissão concedida no PC acessado.
 
-O número, os favoritos e as configurações existentes são mantidos.
-Atualizações são consultadas ao abrir e a cada cinco minutos, com confirmação
-local para baixar e instalar. A edição pública não inclui suas credenciais.
-O pacote particular configurado destina-se somente aos computadores do usuário.
-Os executáveis continuam sem Authenticode; o Windows mantém suas verificações.
+CONTROLE
+O envio de comandos não bloqueia a interface. O movimento final do mouse,
+cliques, arrastos, rolagem e botões laterais são preservados em ordem.
+Nenhuma permissão de controle é concedida automaticamente por esta versão.
+
+A conexão depende da internet e dos serviços. A edição pública não contém
+credenciais particulares e preserva a configuração instalada. Uma instalação
+nova precisa da configuração de conexão. Os executáveis não têm Authenticode.

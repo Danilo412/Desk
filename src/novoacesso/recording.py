@@ -4,6 +4,7 @@ from fractions import Fraction
 from pathlib import Path
 import os,secrets,threading,time
 from PIL import Image,ImageOps
+RECORD_RATE=48000
 
 
 class VideoRecorder:
@@ -36,13 +37,17 @@ class VideoRecorder:
             self.latest=image;self.condition.notify();return True
 
     def offer_audio(self,raw,rate=16000,channels=2):
-        if not self.audio or rate!=16000 or channels!=2 or not isinstance(raw,bytes) or len(raw)!=6400:return
+        if not self.audio or rate not in (16000,48000) or channels!=2 or not isinstance(raw,bytes) or not raw or len(raw)%4 or len(raw)>rate*4//5:return
+        if rate==16000:
+            from .audio_codec import pcm48
+            raw=(pcm48(raw,rate)*32767).astype('<i2').tobytes()
+        samples=len(raw)//4;block_seconds=samples/RECORD_RATE
         with self.condition:
             if self._stop or self.paused or self.origin is None:return
-            if len(self.audio_queue)>=100 or (self.audio_next_time is not None and self.audio_next_time>self.elapsed+2):
+            if len(self.audio_queue)>=500 or (self.audio_next_time is not None and self.audio_next_time>self.elapsed+2):
                 self.warning='A gravação foi encerrada porque o áudio acumulou atraso.';self._stop=True
             else:
-                now=time.monotonic();start=max(0.,self.elapsed-.1)
+                now=time.monotonic();start=max(0.,self.elapsed-block_seconds)
                 if self.audio_next_time is not None:
                     if self.audio_last_wall is not None and now-self.audio_last_wall<.5 and abs(self.audio_next_time-start)<=.15:
                         start=self.audio_next_time
@@ -51,7 +56,7 @@ class VideoRecorder:
                         # from the received video clock. Discard only buffered,
                         # unencoded audio when reanchoring; encoded PTS stay continuous.
                         self.audio_epoch+=1;self.audio_queue.clear()
-                self.audio_queue.append((self.audio_epoch,round(start*16000),raw));self.audio_next_time=start+.1;self.audio_last_wall=now;self.audio_received_samples+=1600
+                self.audio_queue.append((self.audio_epoch,round(start*RECORD_RATE),raw));self.audio_next_time=start+block_seconds;self.audio_last_wall=now;self.audio_received_samples+=samples
             self.condition.notify()
 
     def pause(self,paused):
@@ -94,15 +99,15 @@ class VideoRecorder:
                 container=av.open(output,mode='w',format='mp4',options={'movflags':'+faststart'})
                 video=container.add_stream('libx264',rate=self.fps);video.width,video.height=self.size;video.pix_fmt='yuv420p'
                 video.options={'preset':'ultrafast','crf':'20','tune':'zerolatency'};video.codec_context.thread_count=2
-                audio=container.add_stream('aac',rate=16000) if self.audio else None
-                if audio:audio.layout='stereo';audio.codec_context.format='fltp'
-                resampler=av.AudioResampler(format='fltp',layout='stereo',rate=16000) if audio else None
+                audio=container.add_stream('aac',rate=RECORD_RATE) if self.audio else None
+                if audio:audio.layout='stereo';audio.codec_context.format='fltp';audio.bit_rate=192000
+                resampler=av.AudioResampler(format='fltp',layout='stereo',rate=RECORD_RATE) if audio else None
                 while True:
                     with self.condition:
                         stopping=self._stop;elapsed=self.elapsed;paused=self.paused
                         audio_blocks=list(self.audio_queue);self.audio_queue.clear();image=self.latest;epoch=self.audio_epoch
                         slot=int(elapsed*self.fps)
-                        target_audio=round(max(0.,elapsed if stopping or paused else elapsed-.2)*16000)
+                        target_audio=round(max(0.,elapsed if stopping or paused else elapsed-.2)*RECORD_RATE)
                         audio_due=audio is not None and audio_end<target_audio
                         if not stopping and (paused or slot<=last_pts) and not audio_blocks and not audio_due and epoch==pending_epoch:
                             self.condition.wait(.05 if paused else max(.001,(last_pts+1)/self.fps-elapsed));continue
@@ -110,7 +115,7 @@ class VideoRecorder:
                     pending_audio.extend((start,raw) for generation,start,raw in audio_blocks if generation==pending_epoch)
                     while audio is not None and audio_end<target_audio:
                         while pending_audio and pending_audio[0][0]+len(pending_audio[0][1])//4<=audio_end:pending_audio.popleft()
-                        count=min(1600,target_audio-audio_end)
+                        count=min(4800,target_audio-audio_end)
                         if pending_audio and pending_audio[0][0]<=audio_end:
                             start,raw=pending_audio[0];offset=audio_end-start;count=min(count,len(raw)//4-offset);raw=raw[offset*4:(offset+count)*4]
                         else:
@@ -118,7 +123,7 @@ class VideoRecorder:
                             raw=b'\0'*(count*4)
                         if count<=0:break
                         frame=av.AudioFrame.from_ndarray(np.frombuffer(raw,dtype='<i2').reshape(1,-1),format='s16',layout='stereo')
-                        frame.sample_rate=16000;frame.time_base=Fraction(1,16000);frame.pts=audio_end;audio_end+=frame.samples
+                        frame.sample_rate=RECORD_RATE;frame.time_base=Fraction(1,RECORD_RATE);frame.pts=audio_end;audio_end+=frame.samples
                         for converted in resampler.resample(frame):
                             for packet in audio.encode(converted):container.mux(packet)
                         self.audio_samples+=frame.samples
@@ -135,7 +140,7 @@ class VideoRecorder:
                 container.close();container=None;output.flush();os.fsync(output.fileno())
             if not self.frames:raise ValueError('A gravação não recebeu imagens antes de ser encerrada.')
             if self.audio and not self.audio_received_samples and not self.warning:self.warning='O vídeo foi salvo sem áudio recebido. Confira a fonte de áudio e a permissão da sessão.'
-            temporary.replace(self.path);success=True;duration=max(self.elapsed,(last_pts+1)/self.fps,audio_end/16000)
+            temporary.replace(self.path);success=True;duration=max(self.elapsed,(last_pts+1)/self.fps,audio_end/RECORD_RATE)
         except Exception as ex:error=str(ex)[:240]
         finally:
             if container:
@@ -144,7 +149,7 @@ class VideoRecorder:
             temporary.unlink(missing_ok=True)
             with self.condition:self._stop=True;self.latest=None;self.audio_queue.clear()
             self.result=dict(id=self.id,success=success,path=str(self.path) if success else '',error=error,warning=self.warning,
-                             frames=self.frames,audio_samples=self.audio_samples,audio_received_samples=self.audio_received_samples,duration=round(duration,3),size=self.size)
+                             frames=self.frames,audio_samples=self.audio_samples,audio_received_samples=self.audio_received_samples,audio_sample_rate=RECORD_RATE,duration=round(duration,3),size=self.size)
             self.finished.set()
             try:self.event('recording_done',self.result)
             except RuntimeError:pass
@@ -174,13 +179,15 @@ class LocalRecordingFeed:
     def _audio(self):
         try:
             import soundcard as sc,numpy as np
-            speaker=sc.default_speaker()
-            if speaker is None:raise RuntimeError('Nenhuma saída de áudio encontrada.')
-            loopback=sc.get_microphone(speaker.id,include_loopback=True)
-            if not loopback or not loopback.isloopback:raise RuntimeError('Loopback indisponível.')
-            while not self.closed.is_set() and not self.recorder.finished.is_set():
-                if self.recorder.paused:self.closed.wait(.05);continue
-                with loopback.recorder(samplerate=16000,channels=2,blocksize=1600) as source:
-                    while not self.closed.is_set() and not self.recorder.finished.is_set() and not self.recorder.paused:
-                        raw=(np.clip(source.record(numframes=1600),-1,1)*32767).astype('<i2').tobytes();self.recorder.offer_audio(raw)
+            from .audio_backend import audio_thread_context
+            with audio_thread_context():
+                speaker=sc.default_speaker()
+                if speaker is None:raise RuntimeError('Nenhuma saída de áudio encontrada.')
+                loopback=sc.get_microphone(speaker.id,include_loopback=True)
+                if not loopback or not loopback.isloopback:raise RuntimeError('Loopback indisponível.')
+                while not self.closed.is_set() and not self.recorder.finished.is_set():
+                    if self.recorder.paused:self.closed.wait(.05);continue
+                    with loopback.recorder(samplerate=RECORD_RATE,channels=2,blocksize=960) as source:
+                        while not self.closed.is_set() and not self.recorder.finished.is_set() and not self.recorder.paused:
+                            raw=(np.clip(source.record(numframes=960),-1,1)*32767).astype('<i2').tobytes();self.recorder.offer_audio(raw,RECORD_RATE)
         except Exception as ex:self.recorder.warning='Vídeo gravado sem áudio do sistema: '+str(ex)[:160]

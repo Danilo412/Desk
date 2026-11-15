@@ -68,6 +68,22 @@ def advanced_test(relay=None):
             with av.open(str(base/'1440.mp4')) as source:
                 frame=next(source.decode(video=0));assert (frame.width,frame.height)==(2560,1440)
             checks['recording1440_mp4_decoded']=True
+            phase='audio48';import numpy as np,os
+            from .audio_codec import OpusEncoder,OpusDecoder
+            from .audio_transport import AudioCipher
+            encoder=OpusEncoder();decoder=OpusDecoder();key=os.urandom(32);prefix=os.urandom(4)
+            sender=AudioCipher(key,prefix);receiver=AudioCipher(key,prefix);audio_samples=[]
+            recorder=VideoRecorder(base/'audio48.mp4',audio=True).start();recorder.offer(Image.new('RGB',(64,36),'navy'))
+            for i in range(20):
+                t=(np.arange(960)+i*960)/48000;input_audio=np.column_stack((.25*np.sin(2*np.pi*12000*t),.25*np.sin(2*np.pi*3500*t)))
+                packet=sender.seal(encoder.encode(input_audio));decoded=receiver.open(packet);assert decoded is not None and receiver.open(packet) is None
+                raw=decoder.decode(decoded);audio_samples.append(np.frombuffer(raw,'<i2').reshape(-1,2));recorder.offer_audio(raw,48000,2);time.sleep(.02)
+            recorder.stop();assert recorder.wait() and recorder.result['success'];recorder=None
+            signal=np.concatenate(audio_samples)[2000:,0];peak=np.fft.rfftfreq(len(signal),1/48000)[np.argmax(np.abs(np.fft.rfft(signal)))]
+            assert abs(peak-12000)<15;checks['opus48_stereo_and_authenticated_side_packets']=True
+            with av.open(str(base/'audio48.mp4')) as source:
+                assert source.streams.audio[0].rate==48000 and next(source.decode(audio=0)).layout.nb_channels==2
+            checks['recording48_audio_mp4']=True
             phase='chat';viewer.send(dict(type='chat',text='conversa para exportação'));wait(lambda:any(k=='chat' and d['text']=='conversa para exportação' for k,d in host_events));checks['chat_over_connection']=True
             def operation(name):
                 time.sleep(1.05);request_id=viewer.features.request(name)

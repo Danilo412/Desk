@@ -6,6 +6,19 @@ import threading
 from PIL import Image
 import mss
 
+class MouseInput(ctypes.Structure):
+    _fields_=[('dx',ctypes.c_int32),('dy',ctypes.c_int32),('mouseData',ctypes.c_uint32),('dwFlags',ctypes.c_uint32),('time',ctypes.c_uint32),('dwExtraInfo',ctypes.c_size_t)]
+class KeyInput(ctypes.Structure):
+    _fields_=[('wVk',ctypes.c_uint16),('wScan',ctypes.c_uint16),('dwFlags',ctypes.c_uint32),('time',ctypes.c_uint32),('dwExtraInfo',ctypes.c_size_t)]
+class InputUnion(ctypes.Union):
+    _fields_=[('mi',MouseInput),('ki',KeyInput)]
+class NativeInput(ctypes.Structure):
+    _anonymous_=('value',)
+    _fields_=[('type',ctypes.c_uint32),('value',InputUnion)]
+
+BUTTON_FLAGS={'left':(0x2,0x4,0),'right':(0x8,0x10,0),'middle':(0x20,0x40,0),'back':(0x80,0x100,1),'forward':(0x80,0x100,2)}
+EXTENDED_KEYS={0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x2d,0x2e,0x5b,0x5c,0x5d,0x6f,0xa3,0xa5}
+
 class CursorInfo(ctypes.Structure):
     _fields_=[('cbSize',wintypes.DWORD),('flags',wintypes.DWORD),('hCursor',wintypes.HANDLE),('ptScreenPos',wintypes.POINT)]
 
@@ -13,10 +26,22 @@ class DesktopBackend:
     def __init__(self):
         self.lock=threading.RLock();self.rect=None;self.keys=set();self.buttons=set()
         self.user=ctypes.WinDLL("user32",use_last_error=True)
-        self.user.SetCursorPos.argtypes=[ctypes.c_int,ctypes.c_int]
-        self.user.SetCursorPos.restype=wintypes.BOOL
-        self.user.keybd_event.argtypes=[wintypes.BYTE,wintypes.BYTE,wintypes.DWORD,ctypes.c_size_t]
-        self.user.mouse_event.argtypes=[wintypes.DWORD,wintypes.DWORD,wintypes.DWORD,wintypes.DWORD,ctypes.c_size_t]
+        self.user.SendInput.argtypes=[ctypes.c_uint,ctypes.POINTER(NativeInput),ctypes.c_int];self.user.SendInput.restype=ctypes.c_uint
+        self.user.GetSystemMetrics.argtypes=[ctypes.c_int];self.user.GetSystemMetrics.restype=ctypes.c_int
+
+    def _emit(self,event):
+        if self.user.SendInput(1,ctypes.byref(event),ctypes.sizeof(NativeInput))!=1:
+            raise OSError(ctypes.get_last_error(),'O Windows não aceitou a entrada nesta sessão.')
+    def _mouse(self,flags,data=0,x=None,y=None):
+        event=NativeInput();event.type=0;event.mi.dwFlags=flags;event.mi.mouseData=data&0xffffffff
+        if x is not None:
+            left,top,width,height=[self.user.GetSystemMetrics(i) for i in (76,77,78,79)]
+            if width<2 or height<2:raise RuntimeError('Dimensões da área de trabalho indisponíveis.')
+            event.mi.dx=max(0,min(65535,round((x-left)*65535/(width-1))));event.mi.dy=max(0,min(65535,round((y-top)*65535/(height-1))))
+            event.mi.dwFlags|=0x8000|0x4000|0x2000|0x1
+        self._emit(event)
+    def _key(self,vk,down):
+        event=NativeInput();event.type=1;event.ki.wVk=vk;event.ki.dwFlags=(0 if down else 2)|(1 if vk in EXTENDED_KEYS else 0);self._emit(event)
 
     def monitors(self):
         with mss.MSS() as source:return [dict(m) for m in source.monitors]
@@ -53,25 +78,30 @@ class DesktopBackend:
                 x,y=data.get("x"),data.get("y")
                 if type(x) not in (int,float) or type(y) not in (int,float) or not (0<=x<=1 and 0<=y<=1) or not self.rect:return
                 r=self.rect
-                self.user.SetCursorPos(r["left"]+round(x*(r["width"]-1)),r["top"]+round(y*(r["height"]-1)))
+                px=r['left']+round(x*(r['width']-1));py=r['top']+round(y*(r['height']-1))
                 if kind=="button":
                     button=data.get("button");down=data.get("down")
-                    flags={"left":(0x2,0x4),"right":(0x8,0x10),"middle":(0x20,0x40)}
-                    if button not in flags or type(down) is not bool:return
-                    self.user.mouse_event(flags[button][0 if down else 1],0,0,0,0)
+                    if button not in BUTTON_FLAGS or type(down) is not bool:return
+                    flags=BUTTON_FLAGS[button];self._mouse(flags[0 if down else 1],flags[2],px,py)
                     (self.buttons.add if down else self.buttons.discard)(button)
+                else:self._mouse(0,x=px,y=py)
             elif kind=="wheel":
                 delta=data.get("delta")
-                if type(delta) is int and abs(delta)<=1200:self.user.mouse_event(0x800,0,0,delta&0xffffffff,0)
+                if type(delta) is int and abs(delta)<=1200:self._mouse(0x800,delta)
             elif kind=="key":
                 vk=data.get("vk");down=data.get("down")
                 if type(vk) is not int or not 1<=vk<=254 or type(down) is not bool:return
-                self.user.keybd_event(vk,0,0 if down else 2,0)
+                self._key(vk,down)
                 (self.keys.add if down else self.keys.discard)(vk)
             elif kind=="release":self.release()
 
     def release(self):
         with self.lock:
-            for key in self.keys:self.user.keybd_event(key,0,2,0)
-            for button in self.buttons:self.user.mouse_event({"left":4,"right":16,"middle":64}[button],0,0,0,0)
+            for key in self.keys:
+                try:self._key(key,False)
+                except OSError:pass
+            for button in self.buttons:
+                flags=BUTTON_FLAGS[button]
+                try:self._mouse(flags[1],flags[2])
+                except OSError:pass
             self.keys.clear();self.buttons.clear()

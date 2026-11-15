@@ -2,7 +2,8 @@
 from collections import deque
 import json,queue,struct,threading,time
 
-FRAGMENT=16384
+FRAGMENT=4096
+MAX_FRAGMENT=16384  # Older v2 clients still send 16 KiB fragments.
 META=struct.Struct('>BcIII')  # lane, original kind, message id, total bytes, offset
 LIMITS=(32,2,4,8)
 
@@ -52,8 +53,12 @@ class Outgoing:
             if not any(ready):raise queue.Empty()
             if ready[0] and (self.control_burst<8 or not any(ready[1:])):
                 lane=0;self.control_burst+=1
+            elif ready[3]:
+                # Real-time sound should drain before another large picture
+                # fragment; stale audio cannot be repaired by a later frame.
+                lane=3;self.control_burst=0
             else:
-                cycle=(3,1,1,2)
+                cycle=(1,1,2)
                 lane=None
                 for _ in cycle:
                     candidate=cycle[self.bulk_index%len(cycle)];self.bulk_index+=1
@@ -79,7 +84,7 @@ class Outgoing:
 class Incoming:
     def __init__(self,maximum,control_maximum,error):self.active={};self.maximum=maximum;self.control_maximum=control_maximum;self.error=error
     def feed(self,payload):
-        if not META.size<=len(payload)<=META.size+FRAGMENT:raise self.error('Fragmento multiplexado inválido.')
+        if not META.size<=len(payload)<=META.size+MAX_FRAGMENT:raise self.error('Fragmento multiplexado inválido.')
         lane,kind,id,total,offset=META.unpack_from(payload);data=payload[META.size:]
         if lane>3 or kind not in (b'J',b'V',b'W',b'F',b'A') or total>self.maximum or (kind==b'J' and total>self.control_maximum):raise self.error('Canal multiplexado fora dos limites.')
         if (kind in (b'V',b'W') and lane!=1) or (kind==b'F' and lane!=2) or (kind==b'A' and lane!=3) or (kind==b'J' and lane not in (0,2)):raise self.error('Tipo inválido para o canal.')

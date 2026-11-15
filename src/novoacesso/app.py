@@ -59,6 +59,7 @@ class RemoteCanvas(QWidget):
     def __init__(self):
         super().__init__();self.image=None;self.allow_control=False;self.rect=QRectF();self.last_move=0;self.display_mode='fit';self.surface=None
         self.pressed_buttons=set();self.remote_cursor_shape='arrow'
+        self.pending_move=None;self.move_timer=QTimer(self);self.move_timer.setSingleShot(True);self.move_timer.setTimerType(Qt.TimerType.PreciseTimer);self.move_timer.timeout.connect(self.flush_move)
         self.transfer_enabled=False;self.setAcceptDrops(True)
         self.annotation_mode=False;self.annotation_shape='freehand';self.annotation_color='#ef443b';self.annotation_width=3;self.annotations=[];self.current_stroke=None
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus);self.setMouseTracking(True)
@@ -121,8 +122,15 @@ class RemoteCanvas(QWidget):
                 self.update()
             return
         point=self.point(event,clamp=bool(self.pressed_buttons));now=time.monotonic()
-        if point and now-self.last_move>.008:
-            self.last_move=now;self.input_event.emit(dict(event="move",**point))
+        if point:
+            self.pending_move=point
+            if now-self.last_move>=.008:self.flush_move()
+            elif not self.move_timer.isActive():self.move_timer.start(max(1,round((.008-(now-self.last_move))*1000)))
+
+    def flush_move(self):
+        self.move_timer.stop();point=self.pending_move;self.pending_move=None
+        if point and self.allow_control and not self.annotation_mode:
+            self.last_move=time.monotonic();self.input_event.emit(dict(event='move',**point))
 
     def dragEnterEvent(self,event):
         from .collaboration_ui import local_file_paths
@@ -154,14 +162,18 @@ class RemoteCanvas(QWidget):
     def mouseDoubleClickEvent(self,event):
         self.mousePressEvent(event)
     def mouse_button(self,event,down):
+        self.move_timer.stop();self.pending_move=None
         point=self.point(event,clamp=not down and event.button() in self.pressed_buttons)
-        buttons={Qt.MouseButton.LeftButton:"left",Qt.MouseButton.RightButton:"right",Qt.MouseButton.MiddleButton:"middle"}
+        buttons={Qt.MouseButton.LeftButton:"left",Qt.MouseButton.RightButton:"right",Qt.MouseButton.MiddleButton:"middle",Qt.MouseButton.BackButton:'back',Qt.MouseButton.ForwardButton:'forward'}
         if point and event.button() in buttons:
             (self.pressed_buttons.add if down else self.pressed_buttons.discard)(event.button())
             self.input_event.emit(dict(event="button",button=buttons[event.button()],down=down,**point))
         elif not down and self.allow_control:self.input_event.emit(dict(event="release"))
     def wheelEvent(self,event):
-        if self.allow_control and self.image:self.input_event.emit(dict(event="wheel",delta=max(-1200,min(1200,event.angleDelta().y()))))
+        if self.allow_control and self.image:
+            self.flush_move();delta=event.angleDelta().y()
+            if not delta and not event.pixelDelta().isNull():delta=event.pixelDelta().y()*3
+            self.input_event.emit(dict(event="wheel",delta=max(-1200,min(1200,delta))))
     def keyPressEvent(self,event):
         if self.annotation_mode:
             if event.key()==Qt.Key.Key_Escape:self.set_annotation_mode(False);self.annotation_mode_changed.emit(False);self._local_escape=True
@@ -169,6 +181,7 @@ class RemoteCanvas(QWidget):
         if event.key()==Qt.Key.Key_Escape and self.window().isFullScreen():
             self.escape_fullscreen();event.accept();return
         if self.allow_control:
+            self.flush_move()
             vk=event.nativeVirtualKey()
             if 1<=vk<=254:self.input_event.emit(dict(event="key",vk=vk,down=True))
             event.accept()
@@ -177,11 +190,12 @@ class RemoteCanvas(QWidget):
         if event.key()==Qt.Key.Key_Escape and getattr(self,'_local_escape',False):
             self._local_escape=False;event.accept();return
         if self.allow_control and not event.isAutoRepeat():
+            self.flush_move()
             vk=event.nativeVirtualKey()
             if 1<=vk<=254:self.input_event.emit(dict(event="key",vk=vk,down=False))
             event.accept()
     def focusOutEvent(self,event):
-        self.pressed_buttons.clear();self.input_event.emit(dict(event="release"));self.update();super().focusOutEvent(event)
+        self.move_timer.stop();self.pending_move=None;self.pressed_buttons.clear();self.input_event.emit(dict(event="release"));self.update();super().focusOutEvent(event)
 
     def focusNextPrevChild(self,next):
         if self.allow_control:return False
@@ -199,7 +213,7 @@ class RemoteCanvas(QWidget):
 
     def set_annotation_mode(self,enabled):
         self.annotation_mode=bool(enabled);self.current_stroke=None;self.update_remote_cursor()
-        if enabled:self.input_event.emit(dict(event='release'))
+        if enabled:self.move_timer.stop();self.pending_move=None;self.input_event.emit(dict(event='release'))
         self.update()
 
     def annotation_point(self,event):
@@ -713,7 +727,10 @@ class MainWindow(DeskShell,QMainWindow):
         if self._viewer_gate_held:self._viewer_gate_held=False;self.session_gate.release()
     def send_input(self,data):
         if self.peer and self.peer.role=="viewer" and self.peer.permissions.get("control"):
-            if self.control.isChecked() or data.get("event")=="release":self.peer.send(dict(type="input",**data))
+            if self.control.isChecked() or data.get("event")=="release":
+                sender=getattr(self.peer,'send_input',None)
+                if sender:sender(data)
+                else:self.peer.send(dict(type='input',**data))
     def send_chat(self):
         if not self.peer:self.notice("Conecte os computadores para enviar mensagens.");return
         text=self.message.text().strip()

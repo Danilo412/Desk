@@ -27,20 +27,24 @@ class ScreenPipeline:
         self.seq=(self.seq+1)&0xffffffff;self.frames+=1
         if not video:
             if self.last_video:self.tiles=ScreenEncoder()
-            self.last_video=False;self.video=None
+            self.last_video=False
             packet,stats=self.tiles.encode(image,'deflate',now)
             return b'V',struct.pack('>I',self.seq)+packet[4:],dict(stats,mode='sem perda')
-        desired=int(min(16000000,max(2000000,image.width*image.height*4))*self.factor)
-        reset=self.video is None or self.size!=image.size or (now-self.quality_changed>3 and abs(desired-self.bitrate)>max(1,self.bitrate)*.25)
+        # Bound quantization instead of periodically restarting at a lower
+        # bitrate. Congestion is handled by capture pacing, not blurry frames.
+        desired=int(min(24000000,max(4000000,image.width*image.height*6)))
+        reset=self.video is None or self.size!=image.size
         if reset:
             ctx=av.CodecContext.create('libvpx','w');ctx.width,ctx.height=image.size;ctx.pix_fmt='yuv420p';ctx.time_base=Fraction(1,1000)
-            ctx.bit_rate=desired;ctx.thread_count=2;ctx.options={'deadline':'realtime','cpu-used':'8','lag-in-frames':'0','auto-alt-ref':'0'};ctx.open()
-            self.video=ctx;self.size=image.size;self.pts=0;self.bitrate=desired;self.quality_changed=now
-        frame=av.VideoFrame.from_image(image).reformat(format='yuv420p');frame.pts=self.pts;self.pts+=17
+            ctx.bit_rate=desired;ctx.thread_count=2;ctx.framerate=Fraction(30,1)
+            ctx.options={'deadline':'realtime','cpu-used':'6','lag-in-frames':'0','auto-alt-ref':'0','crf':'16','qmin':'4','qmax':'24'};ctx.open()
+            self.video=ctx;self.size=image.size;self.pts=-1;self.video_origin=now;self.bitrate=desired;self.quality_changed=now
+        self.pts=max(self.pts+1,round((now-self.video_origin)*1000))
+        frame=av.VideoFrame.from_image(image).reformat(format='yuv420p');frame.pts=self.pts
         packets=self.video.encode(frame)
         if len(packets)!=1:raise ProtocolError('Codificador de movimento não produziu um quadro imediato.')
         self.last_video=True;self.tiles.contexts.clear()
-        return b'W',HEAD.pack(self.seq,*image.size)+bytes(packets[0]),dict(deflate=0,vp8=1,tiles=1,width=image.width,height=image.height,mode='vídeo adaptativo')
+        return b'W',HEAD.pack(self.seq,*image.size)+bytes(packets[0]),dict(deflate=0,vp8=1,tiles=1,width=image.width,height=image.height,mode='vídeo · nitidez preservada')
 
 class VideoDecoder:
     def __init__(self):self.context=None;self.size=None

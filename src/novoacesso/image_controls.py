@@ -48,7 +48,7 @@ class ImageSettingsPanel(QWidget):
         self.codec=QComboBox()
         for i in range(owner.codec.count()):self.codec.addItem(owner.codec.itemText(i),owner.codec.itemData(i))
         self.codec.currentIndexChanged.connect(lambda index:owner.codec.setCurrentIndex(owner.codec.findData(self.codec.currentData())));advanced.addWidget(self.codec)
-        note=QLabel('O limite solicitado não aumenta os detalhes de uma tela de origem menor. A fluidez também depende da conexão e dos computadores.');note.setWordWrap(True);note.setObjectName('imageHint');advanced.addWidget(note)
+        note=QLabel('O Desk prioriza a nitidez e reduz o ritmo dos quadros quando a conexão fica sobrecarregada. Original mostra um pixel por pixel; Ajustar mantém as proporções dentro da janela. O limite solicitado não cria detalhes que não existem na tela de origem.');note.setWordWrap(True);note.setObjectName('imageHint');advanced.addWidget(note)
         self.advanced.hide();col.addWidget(self.advanced)
         from .ui_motion import reveal_widget
         self.advanced_toggle.toggled.connect(lambda on:reveal_widget(self.advanced,on,owner));self.advanced_toggle.toggled.connect(lambda on:self.advanced_toggle.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow))

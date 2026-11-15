@@ -31,7 +31,7 @@ def test_multiplex_rejects_overlap_and_out_of_order():
 def test_adaptation_recovers_without_changing_dimensions():
     q=AdaptiveQuality()
     for t in range(1,7):fps,factor=q.observe(60,100,2,now=t)
-    assert fps<30 and factor<1
+    assert fps<30 and factor==1
     for t in range(7,150):fps,factor=q.observe(60,1,0,now=t)
     assert fps==60 and factor==1
     q.feedback(delay_ms=900,rtt_ms=50)
@@ -66,7 +66,7 @@ def test_high_latency_route_does_not_hide_additional_video_queue():
     q=AdaptiveQuality()
     for _ in range(30):q.feedback(delay_ms=1200,rtt_ms=700)
     fps,factor=q.observe(30,5,0,now=1)
-    assert fps<30 and factor<1
+    assert fps<30 and factor==1
     healthy=AdaptiveQuality()
     for _ in range(30):healthy.feedback(delay_ms=750,rtt_ms=700)
     assert healthy.observe(30,5,0,now=1)==(30,1.)

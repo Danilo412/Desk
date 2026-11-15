@@ -11,7 +11,7 @@ def test_mp4_video_audio_pause_and_resolution_change(tmp_path):
     recorder.pause(True);before=recorder.elapsed;time.sleep(.12)
     assert abs(recorder.elapsed-before)<.01 and not recorder.offer(Image.new('RGB',(64,64),'red'))
     recorder.pause(False);recorder.offer(Image.new('RGB',(480,360),'green'));time.sleep(.12);recorder.stop();assert recorder.wait()
-    assert recorder.result['success'] and recorder.result['audio_received_samples']==8000
+    assert recorder.result['success'] and recorder.result['audio_received_samples']==24000
     with av.open(str(path)) as source:
         assert {s.type for s in source.streams}=={'audio','video'}
         frames=list(source.decode(video=0));assert len(frames)>=5 and all((f.width,f.height)==(320,180) for f in frames)
@@ -81,12 +81,14 @@ def test_audio_burst_after_resume_does_not_shift_later_tone(tmp_path):
     recorder.stop();assert recorder.wait() and recorder.result['success']
     chunks=[]
     with av.open(str(tmp_path/'burst.mp4')) as source:
+        rate=source.streams.audio[0].rate
         previous=-1
         for frame in source.decode(audio=0):
             assert float(frame.time)>previous;previous=float(frame.time);chunks.append(frame.to_ndarray().mean(axis=0))
     samples=np.concatenate(chunks);first=None
-    for offset in range(int(resume*16000),len(samples)-1600,320):
-        spectrum=np.abs(np.fft.rfft(samples[offset:offset+1600]*np.hanning(1600)))
-        hz=np.fft.rfftfreq(1600,1/16000)[int(np.argmax(spectrum))]
-        if abs(hz-660)<8:first=(offset+800)/16000;break
+    size=rate//10
+    for offset in range(int(resume*rate),len(samples)-size,rate//50):
+        spectrum=np.abs(np.fft.rfft(samples[offset:offset+size]*np.hanning(size)))
+        hz=np.fft.rfftfreq(size,1/rate)[int(np.argmax(spectrum))]
+        if abs(hz-660)<8:first=(offset+size//2)/rate;break
     assert first is not None and first-resume<.4

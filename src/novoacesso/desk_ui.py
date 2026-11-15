@@ -239,7 +239,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         self.display=QComboBox(toolbar);self.display.addItem('Ajustar à janela','fit');self.display.addItem('Tamanho real · 100%','original');self.display.addItem('Preencher a tela','stretch')
         self.quality=QComboBox(toolbar)
         for label,width,fps in PROFILES:self.quality.addItem(label,(width,fps))
-        self.codec=QComboBox(toolbar);self.codec.addItem('Automático','auto');self.codec.addItem('DEFLATE','deflate');self.codec.addItem('VP8','vp8')
+        self.codec=QComboBox(toolbar);self.codec.addItem('Automático · texto nítido','auto');self.codec.addItem('Sem perda · mais tráfego','deflate');self.codec.addItem('Vídeo · movimento contínuo','vp8')
         self.start_fullscreen=QCheckBox(toolbar)
         for widget in (self.display,self.quality,self.codec,self.start_fullscreen):widget.hide()
         self.image_options=self.make_image_panel(compact=True)

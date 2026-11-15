@@ -23,13 +23,20 @@ class Peer:
         self.permissions=dict(permissions);self.monitors=monitors or []
         self.closed=threading.Event();self.paused=False;self.monitor=1;self.mode="auto";self.width=1920;self.fps=30
         self.options_lock=threading.Lock();self.decoder=ScreenDecoder();self.transfers={};self.pending={}
-        self.quality=AdaptiveQuality();self.video_decoder=VideoDecoder();self.sent_frames={};self.feedback_lock=threading.Lock();self.pings={}
-        self.transfer_lock=threading.RLock();self.audio_queue=queue.Queue(maxsize=4);self.file_offers_pending=0
+        self.quality=AdaptiveQuality();self.video_decoder=VideoDecoder();self.sent_frames={};self.sent_frame_bytes={};self.feedback_lock=threading.Lock();self.pings={}
+        self.transfer_lock=threading.RLock();self.audio_queue=queue.Queue(maxsize=24);self.file_offers_pending=0
         self.audio_capture_running=False;self.audio_capture_attempted=False;self.audio_playback_running=False;self.workers=[]
         from .remote_features import RemoteFeatures
         self.remote_capabilities=set();self.features=RemoteFeatures(self);self.recording_audio_sink=None
+        self.remote_media=set();self.capabilities_received=threading.Event();self.opus_decoder=None;self.audio_metrics={};self.audio_format=''
+        self.audio_decode_lock=threading.Lock()
+        from .audio_transport import FastAudio
+        self.fast_audio=FastAudio(self)
         self.receive_metrics={}
+        self.video_queue=queue.Queue(maxsize=2)
         self.file_send_queue=queue.Queue(maxsize=32);self.file_sender_running=False
+        from .input_dispatch import InputDispatcher
+        self.input_dispatch=InputDispatcher(self.send,self.closed,lambda:self.role=='viewer' and self.permissions.get('control',False),self.close)
 
     def spawn(self,fn):
         thread=threading.Thread(target=fn,daemon=True);self.workers.append(thread);thread.start();return thread
@@ -37,17 +44,24 @@ class Peer:
     def start(self):
         self.channel.start_io()
         if self.channel.closed.is_set():raise ConnectionError('A conexão foi encerrada antes de iniciar a sessão.')
+        if self.role=='viewer':self.spawn(self._decode_video)
         self.spawn(self._receive);self.spawn(self._heartbeat)
         if self.role=="host":
             self.spawn(self._capture)
+            self.spawn(self._audio_watch)
             if callable(getattr(self.backend,'cursor',None)):self.spawn(self._cursor_updates)
         from .remote_features import CAPABILITIES
-        if getattr(self.channel,'version',1)>=2:self.send(dict(type='capabilities',values=sorted(CAPABILITIES)))
+        from .audio_codec import CAPABILITY
+        from .audio_transport import CAPABILITY as FAST_AUDIO
+        if getattr(self.channel,'version',1)>=2:self.send(dict(type='capabilities',values=sorted(CAPABILITIES|{CAPABILITY,FAST_AUDIO})))
         self.event("connected",dict(role=self.role,permissions=self.permissions,monitors=self.monitors))
 
     def send(self,data):
         try:self.channel.control(data)
         except (OSError,ConnectionError,ProtocolError) as ex:self.close(str(ex))
+
+    def send_input(self,data):
+        if self.role=='viewer' and self.permissions.get('control',False):self.input_dispatch.put(data)
 
     def set_permissions(self,permissions):
         if self.role!="host":return
@@ -58,20 +72,29 @@ class Peer:
         self.send(dict(type="permissions",values=self.permissions))
 
     def _heartbeat(self):
-        while not self.closed.wait(4):
+        if getattr(self.channel,'version',1)<2 and self.closed.wait(4):return
+        while not self.closed.is_set():
             self.features.expire()
             nonce=secrets.token_hex(8)
             with self.feedback_lock:
                 self.pings={nonce:time.monotonic()}
             self.send(dict(type="ping",nonce=nonce))
+            self.closed.wait(4)
 
     def _cursor_updates(self):
         last=None
-        while not self.closed.wait(.08):
+        while not self.closed.wait(.02):
             try:shape=self.backend.cursor()
             except Exception:return
             if shape!=last:
                 last=shape;self.send(dict(type='cursor',shape=shape))
+
+    def _audio_watch(self):
+        from .audio import capture_loop
+        while not self.closed.wait(.1):
+            if self.permissions.get('audio',False) and not self.audio_capture_running and not self.audio_capture_attempted:
+                self.audio_capture_running=True;self.audio_capture_attempted=True
+                self.spawn(lambda:capture_loop(self))
 
     def _capture(self):
         modern=getattr(self.channel,'version',1)>=2
@@ -83,9 +106,17 @@ class Peer:
                     with self.options_lock:paused,monitor,width,fps,mode=self.paused,self.monitor,self.width,self.fps,self.mode
                     if paused:
                         self.closed.wait(.1);continue
+                    if modern:
+                        import math
+                        budget=max(2,min(8,math.ceil(max(50,self.quality.rtt_ms)*fps/1000)+1))
+                        with self.feedback_lock:
+                            waiting=len(self.sent_frames)>=budget or sum(self.sent_frame_bytes.values())>=192*1024
+                        if waiting:
+                            self.quality.observe(fps,self.quality.encode_ms,2);self.closed.wait(.005);continue
                     # Não gerar deltas enquanto os quadros anteriores aguardam envio.
                     # Pular antes de codificar preserva a cadeia de deltas e evita atraso acumulado.
                     if getattr(self.channel.outgoing,'video_pending',self.channel.outgoing.qsize)()>=2:
+                        if modern:self.quality.observe(fps,self.quality.encode_ms,2)
                         self.closed.wait(.01);continue
                     image=self.backend.capture(source,monitor,width)
                     if getattr(source,'unchanged',False) and encoder.frames and not encoder.contexts:
@@ -103,7 +134,9 @@ class Peer:
                         seq=struct.unpack_from('>I',payload)[0]
                         with self.feedback_lock:
                             self.sent_frames[seq]=begin
-                            while len(self.sent_frames)>64:self.sent_frames.pop(next(iter(self.sent_frames)))
+                            self.sent_frame_bytes[seq]=len(payload)
+                            while len(self.sent_frames)>64:
+                                previous=next(iter(self.sent_frames));self.sent_frames.pop(previous);self.sent_frame_bytes.pop(previous,None)
                     self.channel.send(frame_kind,payload);sent+=len(payload)
                     if begin-last_stats>=1:
                         last_stats=begin
@@ -111,43 +144,56 @@ class Peer:
                         report=dict(**stats,frames=encoder.frames,seconds=begin-started,bytes=sent,**self.quality.snapshot(),capture=getattr(source,'backend','MSS'),route=getattr(outer,'route_info','TLS direto' if outer is None else 'Relay TCP'))
                         self.event("stats",report)
                         self.channel.control(dict(type="stats",values=report))
-                    if self.permissions.get("audio",False) and not self.audio_capture_running and not self.audio_capture_attempted:
-                        # Uma tentativa por ativação; o próximo clique em áudio permite nova tentativa.
-                        self.audio_capture_running=True;self.audio_capture_attempted=True
-                        from .audio import capture_loop
-                        self.spawn(lambda:capture_loop(self))
                     self.closed.wait(max(0,1/(effective if modern else fps)-(time.monotonic()-begin)))
         except Exception as ex:self.close("Transmissão interrompida: "+str(ex)[:200])
 
     def _receive(self):
-        sample_start=time.monotonic();sample_frames=0;sample_bytes=0;sample_decode=0.
         try:
             while not self.closed.is_set():
                 kind,data=self.channel.receive()
                 if kind==b"J":self._control(data)
                 elif kind in (b"V",b"W"):
                     if self.role!="viewer":raise ProtocolError("Quadro recebido no papel incorreto.")
-                    decode_start=time.monotonic()
-                    image=self.decoder.decode(data) if kind==b'V' else self.video_decoder.decode(data)
-                    sample_decode+=time.monotonic()-decode_start;sample_frames+=1;sample_bytes+=len(data)
-                    self.event("frame",image)
-                    now=time.monotonic();elapsed=now-sample_start
-                    if elapsed>=1:
-                        self.receive_metrics=dict(received_fps=round(sample_frames/elapsed,1),decode_ms=round(sample_decode*1000/sample_frames,2),received_kbps=round(sample_bytes*8/elapsed/1000,1))
-                        self.event('receive_stats',self.receive_metrics)
-                        sample_start=now;sample_frames=0;sample_bytes=0;sample_decode=0.
-                    if self.channel.version>=2:
-                        import struct
-                        self.send(dict(type='frame_ack',seq=struct.unpack_from('>I',data)[0]))
+                    # Decode independently so heavy HD frames do not stall audio.
+                    while not self.closed.is_set():
+                        try:self.video_queue.put((kind,data),timeout=.05);break
+                        except queue.Full:continue
                 elif kind==b"F":self._file_chunk(data)
                 elif kind==b"A":
                     from .audio import receive_audio
-                    receive_audio(self,data)
+                    with self.audio_decode_lock:receive_audio(self,data)
         except Exception as ex:self.close(str(ex)[:220])
+
+    def _decode_video(self):
+        sample_start=time.monotonic();sample_frames=0;sample_bytes=0;sample_decode=0.
+        try:
+            while not self.closed.is_set():
+                try:kind,data=self.video_queue.get(timeout=.1)
+                except queue.Empty:continue
+                decode_start=time.monotonic()
+                image=self.decoder.decode(data) if kind==b'V' else self.video_decoder.decode(data)
+                sample_decode+=time.monotonic()-decode_start;sample_frames+=1;sample_bytes+=len(data)
+                if self.closed.is_set():return
+                self.event('frame',image)
+                now=time.monotonic();elapsed=now-sample_start
+                if elapsed>=1:
+                    self.receive_metrics=dict(received_fps=round(sample_frames/elapsed,1),decode_ms=round(sample_decode*1000/sample_frames,2),received_kbps=round(sample_bytes*8/elapsed/1000,1))
+                    self.event('receive_stats',self.receive_metrics)
+                    sample_start=now;sample_frames=0;sample_bytes=0;sample_decode=0.
+                if self.channel.version>=2:
+                    import struct
+                    self.send(dict(type='frame_ack',seq=struct.unpack_from('>I',data)[0]))
+        except Exception as ex:self.close('Decodificação interrompida: '+str(ex)[:180])
 
     def _control(self,msg):
         kind=msg["type"]
-        if kind in ('capabilities','advanced_request','advanced_result','whiteboard_state','annotation'):
+        if kind=='capabilities':
+            self.features.handle(msg)
+            from .audio_codec import CAPABILITY
+            from .audio_transport import CAPABILITY as FAST_AUDIO
+            self.remote_media=set(msg['values'])&{CAPABILITY,FAST_AUDIO};self.capabilities_received.set();return
+        if kind in ('audio_route','audio_route_ready'):self.fast_audio.handle(msg);return
+        if kind in ('advanced_request','advanced_result','whiteboard_state','annotation'):
             self.features.handle(msg);return
         if kind=='cursor':
             if self.role=='viewer' and msg.get('shape') in ('arrow','ibeam','wait','cross','hand','size_all','size_we','size_ns','size_nwse','size_nesw','forbidden','busy'):
@@ -164,7 +210,7 @@ class Peer:
         if kind=='frame_ack' and self.role=='host':
             seq=msg.get('seq')
             if type(seq) is int:
-                with self.feedback_lock:start=self.sent_frames.pop(seq,None)
+                with self.feedback_lock:start=self.sent_frames.pop(seq,None);self.sent_frame_bytes.pop(seq,None)
                 if start is not None:self.quality.feedback(delay_ms=(time.monotonic()-start)*1000)
             return
         if kind=="bye":self.close("Sessão encerrada pelo outro computador.")
@@ -335,7 +381,7 @@ class Peer:
 
     def close(self,reason="Sessão encerrada."):
         if self.closed.is_set():return
-        self.closed.set();self.channel.close()
+        self.closed.set();self.input_dispatch.stop();self.fast_audio.stop();self.channel.close()
         self.features.revoke();self.recording_audio_sink=None
         if self.backend:self.backend.release()
         with self.transfer_lock:
@@ -348,7 +394,7 @@ class Peer:
 
     def wait_for_workers(self,timeout=1):
         deadline=time.monotonic()+timeout
-        for thread in [*self.workers,self.channel.io_thread]:
+        for thread in [*self.workers,self.input_dispatch.thread,self.channel.io_thread]:
             if thread is not None and thread is not threading.current_thread():
                 thread.join(timeout=max(0,deadline-time.monotonic()))
 

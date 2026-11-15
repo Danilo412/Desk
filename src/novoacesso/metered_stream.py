@@ -18,6 +18,7 @@ class MeteredStream:
         self.sock,self.worker=socket.socketpair();self.ready=threading.Event();self.stopped=threading.Event()
         self.failure=None;self.loop=None;self.done=None
         self.route_info='WebRTC: rota ainda não identificada'
+        self.audio_channel=None;self.audio_ready=threading.Event();self.datagram_handler=None;self.remote_peer=None
         self.thread=threading.Thread(target=self._run,daemon=True)
     def _run(self):
         try:asyncio.run(self._session())
@@ -37,7 +38,22 @@ class MeteredStream:
                 return create_peer(self.ice_servers,self.relay_only)
             options['_pc_factory']=pc_factory
         peer=(self.peer_factory or MeteredPeer)(**options)
-        channels=[];tasks=[];selected=[None];incoming=asyncio.Queue(maxsize=32)
+        channels=[];audio_channels=[];tasks=[];selected=[None];incoming=asyncio.Queue(maxsize=32)
+        def bind_audio(raw,remote):
+            if remote is not self.remote_peer:raw.close();return
+            if self.audio_channel is raw:return
+            if self.audio_channel is not None and self.audio_channel is not raw:raw.close();return
+            self.audio_channel=raw;audio_channels.append(raw)
+            @raw.on('open')
+            def audio_opened():self.audio_ready.set()
+            @raw.on('close')
+            def audio_closed():self.audio_ready.clear()
+            @raw.on('message')
+            def audio_message(data):
+                handler=self.datagram_handler
+                if handler and isinstance(data,bytes) and 24<len(data)<=1400:handler(data)
+            if raw.readyState=='open':self.audio_ready.set()
+        self._bind_audio=bind_audio
         # 256 KiB in flight, below the data-channel's 512 KiB high-water mark.
         # A 128 KiB window caps a 150 ms route around 7 Mbit/s.
         window=asyncio.BoundedSemaphore(16)
@@ -58,6 +74,7 @@ class MeteredStream:
             except Exception:pass
             finally:self.done.set()
         def bind(raw,remote=None):
+            if raw.label=='desk-audio-v1':bind_audio(raw,remote);return
             if len(channels)>=4:raw.close();self.failure='Muitos dispositivos nesta sala.';self.done.set();return
             dc=DataChannel(raw,max_buffered_amount=512*1024,max_queued_sends=8);channels.append(dc)
             def opened(*args):
@@ -74,6 +91,7 @@ class MeteredStream:
                     self.failure='Não foi comprovada uma rota TURN em ambas as pontas.';self.done.set();dc.close();return
                 self.timings['data_channel_seconds']=round(time.monotonic()-self.started,3)
                 selected[0]=dc;tasks.extend([asyncio.create_task(outbound(dc)),asyncio.create_task(inbound(dc))]);self.ready.set()
+                self.remote_peer=remote
             def message(event):
                 if selected[0] is not dc:return
                 data=event.data
@@ -102,7 +120,26 @@ class MeteredStream:
             for task in tasks:task.cancel()
             if tasks:await asyncio.gather(*tasks,return_exceptions=True)
             for dc in channels:dc.close()
+            self.datagram_handler=None;self.audio_ready.clear()
+            for raw in audio_channels:raw.close()
             await peer.close()
+
+    def open_audio_channel(self,timeout=3):
+        if not self.loop or not self.remote_peer or self.stopped.is_set():return False
+        def create():
+            if self.audio_channel is None:
+                self._bind_audio(self.remote_peer.create_data_channel('desk-audio-v1',ordered=False,maxRetransmits=0),self.remote_peer)
+        try:self.loop.call_soon_threadsafe(create)
+        except RuntimeError:return False
+        return self.audio_ready.wait(timeout)
+
+    def send_datagram(self,payload):
+        if not self.audio_ready.is_set() or self.stopped.is_set() or len(payload)>1400:return False
+        def send():
+            channel=self.audio_channel
+            if channel and channel.readyState=='open' and channel.bufferedAmount<8192:channel.send(payload)
+        try:self.loop.call_soon_threadsafe(send);return True
+        except RuntimeError:return False
     def open(self,timeout=90,waiting=None):
         if waiting:waiting(self)
         self.thread.start();deadline=None if timeout is None else time.monotonic()+timeout
