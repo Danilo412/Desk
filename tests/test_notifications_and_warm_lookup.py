@@ -58,6 +58,7 @@ def test_incoming_file_dialog_comes_forward_but_cancel_never_saves(tmp_path,monk
         QTimer.singleShot(40,cancel);window.on_prompt(prompt)
         assert seen==[True] and prompt.answer is None
         assert window.notifications.last_kind=='file_offer'
+        assert not window.notifications.toast.isVisible()
         assert not list(tmp_path.glob('arquivo-de-teste.txt'))
     finally:window.close();QApplication.processEvents()
 

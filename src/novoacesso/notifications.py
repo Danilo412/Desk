@@ -39,8 +39,9 @@ class NotificationCenter(QObject):
         QTimer.singleShot(0,dialog,focus)
     def notify(self,kind,title,text,urgent=False,destination='chat'):
         if self.window.closing:return
+        repeated=bool(self.toast and self.toast.isVisible() and self.last_kind==kind)
         self.last_kind=kind;self.destination=destination
-        if urgent and self.window.identity.settings().get('foreground_requests',True):self.bring_forward()
+        if urgent and not repeated and self.window.identity.settings().get('foreground_requests',True):self.bring_forward()
         settings=self.window.identity.settings()
         if not settings.get('notifications_enabled',True):return
         if kind=='chat' and not settings.get('notification_previews',True):text='Você recebeu uma nova mensagem na sessão.'
@@ -48,6 +49,9 @@ class NotificationCenter(QObject):
             self.toast=NotificationToast();self.toast.activated.connect(self.open_destination)
         screen=self.window.screen() or QApplication.primaryScreen()
         if screen:self.toast.present(title,text,screen)
+    def dismiss_request(self,kind):
+        expected={'consent':'connection','save_file':'file_offer','advanced_action':'request'}.get(kind)
+        if self.toast and expected==self.last_kind:self.toast.hide()
     def open_destination(self):
         self.bring_forward()
         if self.destination in ('chat','files') and self.window.peer:self.window.open_session_panel(0 if self.destination=='chat' else 1)

@@ -501,6 +501,7 @@ class MainWindow(DeskShell,QMainWindow):
                 prompt.answer=dialog.selectedFiles()[0] if allowed and dialog.selectedFiles() else None;dialog.deleteLater()
         finally:
             if prompt.is_cancelled():prompt.answer=None
+            self.notifications.dismiss_request(prompt.kind)
             prompt.done.set();self.prompts.remove(prompt)
 
     def permissions(self):return dict(control=self.allow_control.isChecked(),clipboard=self.allow_clipboard.isChecked(),audio=self.allow_audio.isChecked())

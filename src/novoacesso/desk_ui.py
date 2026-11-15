@@ -831,6 +831,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         self.on_collaboration_event(name,data)
         self.on_advanced_event(name,data)
         if name=='incoming_cancelled':
+            self.notifications.dismiss_request('consent')
             text=data['text'];self.incoming_notice_text.setText(text);self.incoming_notice.show();self.incoming_notice_timer.start(6500)
             self.activity.setText(text);self.statusBar().showMessage(text,6500)
 
