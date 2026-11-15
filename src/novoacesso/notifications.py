@@ -7,6 +7,7 @@ class NotificationToast(QFrame):
     def __init__(self):
         super().__init__(None,Qt.WindowType.Tool|Qt.WindowType.FramelessWindowHint|Qt.WindowType.WindowStaysOnTopHint|Qt.WindowType.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating,True)
+        self.setWindowTitle('Desk · notificação')
         self.setObjectName('deskNotification');self.setFixedWidth(360)
         self.setStyleSheet('QFrame#deskNotification{background:#292d31;border:1px solid #6d7279;border-left:4px solid #ef6259;border-radius:7px;} QLabel{color:#eeeeee;background:transparent;border:0;} QPushButton{background:#353a40;color:#eeeeee;border:1px solid #626973;border-radius:4px;padding:5px 10px;} QPushButton:hover{background:#4a3a39;border-color:#ef6259;}')
         col=QVBoxLayout(self);col.setContentsMargins(16,12,12,12);col.setSpacing(8)
@@ -17,7 +18,7 @@ class NotificationToast(QFrame):
         self.timer=QTimer(self);self.timer.setSingleShot(True);self.timer.timeout.connect(self.hide)
     def present(self,title,body,screen):
         self.title.setText(title);self.body.setText(str(body)[:240]);self.adjustSize()
-        area=screen.availableGeometry();self.move(area.right()-self.width()-18,area.bottom()-self.height()-18)
+        area=screen.availableGeometry();self.move(area.right()-self.width()-18,area.top()+58)
         self.show();self.raise_();self.timer.start(9000)
 
 class NotificationCenter(QObject):
