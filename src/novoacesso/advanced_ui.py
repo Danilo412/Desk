@@ -257,6 +257,7 @@ class AdvancedTools:
             title,text=messages[operation];dialog=QMessageBox(QMessageBox.Icon.Question,title,text,QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,self)
             dialog.setDefaultButton(QMessageBox.StandardButton.No)
         timer=QTimer(dialog);timer.setInterval(75);timer.timeout.connect(lambda:dialog.reject() if not valid() else None);timer.start()
+        self.notifications.prepare_dialog(dialog)
         result=dialog.exec();allowed=valid() and result==(QDialog.DialogCode.Accepted if operation=='print' else QMessageBox.StandardButton.Yes)
         answer=dialog.selectedFiles()[0] if allowed and operation=='print' and dialog.selectedFiles() else allowed
         dialog.deleteLater()

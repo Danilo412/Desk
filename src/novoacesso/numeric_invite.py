@@ -44,7 +44,20 @@ class NumericInvite:
         self.expires=invitation['expires'];self.code=identity.desk_address if identity is not None else f'{secrets.randbelow(10**12):012d}'
         self.id=secrets.token_hex(12);self.stopped=threading.Event();self.loop=None;self.done=None
         self.thread=threading.Thread(target=self._run,daemon=True)
+        self.ready=threading.Event();self.serving=threading.Event();self.serving.set();self.client=None
     def start(self):self.thread.start();return self
+    def reusable(self):return self.ready.is_set() and not self.stopped.is_set() and self.loop is not None and self.loop.is_running()
+    def detach_for_lookup(self):self.serving.clear()
+    def resolve(self,code,timeout=20,cancelled=None,expected_public=None,notify=False):
+        if not self.reusable():raise ConnectionError('O serviço de localização está reconectando.')
+        async def query():
+            if not self.serving.is_set():
+                room,_=code_material(self.code)
+                await self.client.unsubscribe(room)
+            return await _resolve(code,self.key,timeout,cancelled,None,True,expected_public,self.client,notify)
+        job=asyncio.run_coroutine_threadsafe(query(),self.loop)
+        try:return job.result(timeout+3)
+        except BaseException:job.cancel();raise
     def stop(self):
         self.stopped.set()
         if self.loop and self.done:
@@ -56,15 +69,17 @@ class NumericInvite:
             if not self.stopped.is_set():self.event('numeric_error',{'id':self.id,'text':signalling_error(error),'retry_ms':60000 if getattr(error,'close_code',None)==4010 else 15000})
     async def _serve(self):
         from metered_realtime import Direct
-        room,key=code_material(self.code);client=client_for(self.key,self.factory)
+        room,key=code_material(self.code);client=self.client=client_for(self.key,self.factory)
         self.loop=asyncio.get_running_loop();self.done=asyncio.Event();served=RequestBudget()
         @client.on(Direct)
         async def request(event):
             data=event.data
-            if self.stopped.is_set() or time.time()>=self.expires or not isinstance(data,dict) or data.get('kind')!='numeric_request':return
+            if self.stopped.is_set() or not self.serving.is_set() or time.time()>=self.expires or not isinstance(data,dict) or data.get('kind')!='numeric_request':return
             nonce=data.get('nonce')
             if not isinstance(nonce,str) or len(nonce)!=32 or any(c not in '0123456789abcdef' for c in nonce):return
             if not served.allow(event.sender_peer_id):return
+            if data.get('notify') is True:
+                self.event('incoming_lookup',{'id':self.id,'text':'Solicitação de conexão recebida. Preparando a conexão segura…'})
             iv=secrets.token_bytes(12)
             sealed=iv+AESGCM(key).encrypt(iv,self.token.encode(),(room+nonce).encode())
             offer=dict(kind='numeric_offer',nonce=nonce,sealed=base64.urlsafe_b64encode(sealed).decode())
@@ -75,20 +90,21 @@ class NumericInvite:
         try:
             await client.connect();await client.subscribe(room)
             if self.stopped.is_set():return
+            self.ready.set()
             self.event('numeric_ready',{'id':self.id,'code':format_address(self.code),'expires':self.expires,'fixed':self.identity is not None})
             try:await asyncio.wait_for(self.done.wait(),max(.1,self.expires-time.time()))
             except asyncio.TimeoutError:self.event('numeric_expired',{'id':self.id})
-        finally:await client.close()
+        finally:self.ready.clear();await client.close()
 
 def resolve_code(code,key,timeout=20,cancelled=None,client_factory=None):
     return asyncio.run(_resolve(code,key,timeout,cancelled,client_factory))['token']
 
-def resolve_address(code,key,timeout=20,cancelled=None,client_factory=None,expected_public=None):
-    return asyncio.run(_resolve(code,key,timeout,cancelled,client_factory,True,expected_public))
+def resolve_address(code,key,timeout=20,cancelled=None,client_factory=None,expected_public=None,notify=False):
+    return asyncio.run(_resolve(code,key,timeout,cancelled,client_factory,True,expected_public,notify=notify))
 
-async def _resolve(code,api_key,timeout,cancelled,factory,require_signed=False,expected_public=None):
+async def _resolve(code,api_key,timeout,cancelled,factory,require_signed=False,expected_public=None,borrowed=None,notify=False):
     from metered_realtime import Direct,Presence
-    room,key=code_material(code);client=client_for(api_key,factory)
+    room,key=code_material(code);client=borrowed if borrowed is not None else client_for(api_key,factory)
     future=asyncio.get_running_loop().create_future();nonce=secrets.token_hex(16);asked=set();rejected_identity=False
     @client.on(Presence)
     async def presence(event):
@@ -97,7 +113,7 @@ async def _resolve(code,api_key,timeout,cancelled,factory,require_signed=False,e
             if len(asked)>=8:break
             if peer.peer_id in asked:continue
             asked.add(peer.peer_id)
-            await client.send(peer.peer_id,dict(kind='numeric_request',nonce=nonce))
+            await client.send(peer.peer_id,dict(kind='numeric_request',nonce=nonce,**({'notify':True} if notify else {})))
     @client.on(Direct)
     def offer(event):
         nonlocal rejected_identity
@@ -120,7 +136,8 @@ async def _resolve(code,api_key,timeout,cancelled,factory,require_signed=False,e
     stage='connect'
     try:
         async with asyncio.timeout(timeout):
-            await client.connect();stage='subscribe';await client.subscribe(room);stage='lookup'
+            if borrowed is None:await client.connect()
+            stage='subscribe';await client.subscribe(room);stage='lookup'
             while not future.done():
                 if cancelled and cancelled():raise ConnectionError('Conexão cancelada.')
                 await asyncio.wait([future],timeout=.1)
@@ -134,4 +151,9 @@ async def _resolve(code,api_key,timeout,cancelled,factory,require_signed=False,e
     except Exception as error:
         permanent=getattr(error,'close_code',None) in (4001,4003,4010) or getattr(error,'code',None) in ('channel_not_authorized','invalid_token','token_expired','over_message_quota')
         raise (ProtocolError if permanent else ConnectionError)(signalling_error(error)) from error
-    finally:await client.close()
+    finally:
+        if borrowed is None:await client.close()
+        else:
+            client.off(Presence,presence);client.off(Direct,offer)
+            try:await asyncio.wait_for(client.unsubscribe(room),2)
+            except Exception:pass

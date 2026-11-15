@@ -376,7 +376,14 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
             self.identity.configure(interface_motion=enabled)
             if hasattr(self,'interface_motion'):self.interface_motion.set_requested(enabled)
         self.motion_enabled.toggled.connect(change_motion);appearance.addStretch()
-        for i,icon in enumerate(['connection','lock','monitor','monitor','settings']):self.settings_navigation.item(i).setIcon(QIcon(str(ASSETS/(icon+'.svg'))))
+        self.settings_navigation.addItem('Notificações')
+        notifications=section('Notificações','Receba avisos de mensagens, arquivos e solicitações mesmo usando outro aplicativo.')
+        for key,label in [('notifications_enabled','Mostrar notificações de mensagens e arquivos'),('notification_previews','Mostrar prévia das mensagens'),('foreground_requests','Trazer pedidos de conexão e arquivos para a frente')]:
+            box=QCheckBox(label);box.setChecked(settings.get(key,True));box.toggled.connect(lambda enabled,k=key:self.identity.configure(**{k:enabled}));notifications.addWidget(box)
+        notifications.addWidget(hint('Mensagens mostram um aviso discreto. Pedidos de aceite abrem uma janela acima do Desk e continuam dependendo da sua confirmação.'))
+        notifications.addWidget(action_button('Testar mensagem em 5 segundos',lambda:QTimer.singleShot(5000,self.notifications.test_message)),0,Qt.AlignmentFlag.AlignLeft)
+        notifications.addWidget(action_button('Testar solicitação em 5 segundos',lambda:QTimer.singleShot(5000,self.notifications.test_request)),0,Qt.AlignmentFlag.AlignLeft);notifications.addStretch()
+        for i,icon in enumerate(['connection','lock','monitor','monitor','settings','info']):self.settings_navigation.item(i).setIcon(QIcon(str(ASSETS/(icon+'.svg'))))
         self.settings_navigation.currentRowChanged.connect(self.settings_pages.setCurrentIndex);self.settings_navigation.setCurrentRow(0)
         self.tabs.addTab(page,'Configurações');self.refresh_trusted()
 
@@ -760,6 +767,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         self._remember_approved_public=None
         self.incoming_notice.hide()
         dialog,checks=self.build_consent_window(prompt)
+        self.notifications.prepare_dialog(dialog)
         timer=QTimer(dialog);timer.setInterval(75);timer.timeout.connect(lambda:dialog.reject() if prompt.is_cancelled() or self.closing else None);timer.start()
         allowed=dialog.exec()==QDialog.DialogCode.Accepted and not prompt.is_cancelled() and not self.closing
         if allowed:
@@ -771,6 +779,11 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
 
     def on_event(self,name,data):
         if isinstance(data,dict) and data.get('_ui_epoch',self.connection_epoch)!=self.connection_epoch:return
+        if name=='incoming_lookup':
+            if self.numeric_invite and data.get('id')==self.numeric_invite.id and not self.peer:
+                self.notifications.notify('connection','Solicitação de conexão',data['text'],True,'connection')
+            return
+        if name=='file_received':self.notifications.notify('file_received','Arquivo recebido',data.get('name','Arquivo recebido e conferido.'),destination='files')
         if name in ('connect_stage','connect_error') and data.get('epoch',self.connection_epoch)!=self.connection_epoch:return
         if name.startswith('numeric_') and (not self.numeric_invite or data.get('id')!=self.numeric_invite.id):return
         self._core_event(name,data)

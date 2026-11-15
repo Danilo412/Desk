@@ -246,6 +246,8 @@ class MainWindow(DeskShell,QMainWindow):
         self.build_shell()
         from .update_ui import UpdateController
         self.updates=UpdateController(self)
+        from .notifications import NotificationCenter
+        self.notifications=NotificationCenter(self)
         self.apply_view_preferences(self.identity.settings().get('view'))
         self.frame_timer=QTimer(self);self.frame_timer.setInterval(16);self.frame_timer.timeout.connect(self.render_latest_frame);self.frame_timer.start()
         self.statusBar().showMessage("Nenhum acesso remoto ativo.")
@@ -485,6 +487,7 @@ class MainWindow(DeskShell,QMainWindow):
         if self.closing or prompt.is_cancelled():prompt.cancelled=True;prompt.done.set();return
         self.prompts.append(prompt)
         try:
+            self.notifications.incoming(prompt.kind,prompt.data)
             if prompt.kind=="consent":
                 prompt.answer=self.consent_dialog(prompt)
             elif prompt.kind=='advanced_action':prompt.answer=self.advanced_prompt(prompt)
@@ -493,6 +496,7 @@ class MainWindow(DeskShell,QMainWindow):
                 dialog=QFileDialog(self.fullscreen_window or self,f"Receber {name} ({size/1024:.1f} KB)",str(Path.home()/"Downloads"))
                 dialog.setOption(QFileDialog.Option.DontUseNativeDialog,True);dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave);dialog.setFileMode(QFileDialog.FileMode.AnyFile);dialog.selectFile(name)
                 timer=QTimer(dialog);timer.setInterval(75);timer.timeout.connect(lambda:dialog.reject() if prompt.is_cancelled() or self.closing else None);timer.start()
+                self.notifications.prepare_dialog(dialog)
                 allowed=dialog.exec()==QFileDialog.DialogCode.Accepted and not prompt.is_cancelled() and not self.closing
                 prompt.answer=dialog.selectedFiles()[0] if allowed and dialog.selectedFiles() else None;dialog.deleteLater()
         finally:
@@ -524,8 +528,10 @@ class MainWindow(DeskShell,QMainWindow):
             if self.host:self.host.stop();self.host=None
             self.notice("Não foi possível compartilhar: "+str(ex))
 
-    def stop_sharing(self):
-        if self.numeric_invite:self.numeric_invite.stop();self.numeric_invite=None
+    def stop_sharing(self,keep_directory=None):
+        if self.numeric_invite:
+            if self.numeric_invite is not keep_directory:self.numeric_invite.stop()
+            self.numeric_invite=None
         self.show_fixed_address();self._desk_address_online=False
         self.set_availability('preparing' if self._desk_listening_requested else 'offline')
         if self.host:self.host.stop();self.host=None
@@ -546,7 +552,7 @@ class MainWindow(DeskShell,QMainWindow):
             self.remote_invite.setFocus();self.activity.setText("Digite ou cole o endereço do outro dispositivo.");return
         self._desk_last_remote=self.remote_invite.toPlainText().strip();self.address_timer.stop()
         if self.peer or self.connecting:self.notice("Já existe uma conexão ativa ou em andamento.");return
-        self.stop_sharing();token=self.remote_invite.toPlainText().strip()
+        token=self.remote_invite.toPlainText().strip()
         if not token:self.notice("Digite o código ou cole o convite do outro computador.");return
         if not retry and not token.startswith(('NA1-','NAU1-')):
             from .saved_connections import authorized_for_address,open_connection
@@ -568,6 +574,9 @@ class MainWindow(DeskShell,QMainWindow):
             self.active_saved_id=self.next_saved_id;self.next_saved_id=None
             self.reconnect_profile=token if token.startswith('NAU1-') else ''
         endpoint=self.relay_endpoint();numeric_key=endpoint.get('api_key') if endpoint and endpoint.get('mode')=='metered' else self.cloud_signaling_key
+        warm=self.numeric_invite if not token.startswith(('NA1-','NAU1-')) and self.numeric_invite and self.numeric_invite.key==numeric_key and self.numeric_invite.reusable() else None
+        if warm:warm.detach_for_lookup()
+        self.stop_sharing(keep_directory=warm)
         force_relay=self.force_relay.isChecked()
         self.connecting=True;self.connect_button.setEnabled(False);self.status.setText("Aguardando o outro computador")
         self.connection_epoch+=1;epoch=self.connection_epoch
@@ -593,7 +602,8 @@ class MainWindow(DeskShell,QMainWindow):
                     self.emit_event('connect_stage',{'text':'Localizando o endereço na rede Desk…','stage':'locating','epoch':epoch})
                     if not numeric_key:raise ValueError('Configure o serviço de internet para usar códigos numéricos.')
                     from .numeric_invite import resolve_address
-                    lookup=resolve_address(token,numeric_key,cancelled=lambda:self.closing or epoch!=self.connection_epoch,expected_public=self.identity.address_peer(token))
+                    options=dict(cancelled=lambda:self.closing or epoch!=self.connection_epoch,expected_public=self.identity.address_peer(token),notify=True)
+                    lookup=warm.resolve(token,**options) if warm else resolve_address(token,numeric_key,**options)
                     resolved=lookup['token']
                 self.emit_event('connect_stage',{'text':'Estabelecendo a conexão segura com o computador remoto.','stage':'connecting','epoch':epoch})
                 from .network_config import refresh_profile
@@ -608,6 +618,8 @@ class MainWindow(DeskShell,QMainWindow):
             except Exception as ex:
                 from .wire import ProtocolError
                 if epoch==self.connection_epoch:self.emit_event("connect_error",{"text":str(ex)[:250],'epoch':epoch,'retryable':not isinstance(ex,(ProtocolError,ValueError))})
+            finally:
+                if warm:warm.stop()
         threading.Thread(target=connect,daemon=True).start()
 
     def on_joined(self,peer):
@@ -819,7 +831,9 @@ class MainWindow(DeskShell,QMainWindow):
         elif name=="clipboard":
             if self.peer and self.peer.permissions.get("clipboard"):
                 self.last_clipboard=data["text"];QApplication.clipboard().setText(data["text"])
-        elif name=="chat":self.chat.appendPlainText("Outra pessoa: "+data["text"])
+        elif name=="chat":
+            self.chat.appendPlainText("Outra pessoa: "+data["text"])
+            self.notifications.notify('chat','Nova mensagem no Desk',data['text'],destination='chat')
         elif name=="stats":
             elapsed=max(.001,data["seconds"]);text=f"{data['width']}×{data['height']} • DEFLATE {data['deflate']} / VP8 {data['vp8']} blocos no último quadro • {data['frames']/elapsed:.1f} quadros/s • {data['bytes']/elapsed/1024:.0f} KB/s médios"
             if 'effective_fps' in data:
@@ -839,6 +853,7 @@ class MainWindow(DeskShell,QMainWindow):
                 self.activity.setText(data['text']);self.schedule_reconnect()
             else:
                 self.retry_timer.stop();self.manual_disconnect=True;self.activity.setText(data['text'])
+                if self._desk_listening_requested and not self.closing:QTimer.singleShot(300,self.prepare_address)
         elif name=="disconnected":
             self.release_viewer_gate()
             self.exit_fullscreen()
@@ -906,6 +921,7 @@ class MainWindow(DeskShell,QMainWindow):
             self.hide();self.tray.show();event.ignore();return
         self.closing=True
         self.updates.stop()
+        self.notifications.stop()
         for prompt in self.prompts:prompt.cancelled=True;prompt.answer=None;prompt.done.set()
         self.disconnect()
         if self.persistent:self.persistent.stop();self.persistent=None

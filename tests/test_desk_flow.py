@@ -27,7 +27,7 @@ def test_paste_and_enter_use_single_remote_address(tmp_path,monkeypatch):
 
 def test_empty_connect_keeps_incoming_listener(tmp_path,monkeypatch):
     monkeypatch.setenv('NOVOACESSO_STATE_DIR',str(tmp_path));window=MainWindow();calls=[]
-    monkeypatch.setattr(window,'stop_sharing',lambda:calls.append('stopped'))
+    monkeypatch.setattr(window,'stop_sharing',lambda **kwargs:calls.append('stopped'))
     try:
         window.connect_peer()
         assert calls==[] and not window.connecting

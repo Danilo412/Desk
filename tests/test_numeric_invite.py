@@ -21,6 +21,8 @@ class Client:
                 result=fn(event)
                 if asyncio.iscoroutine(result):asyncio.create_task(result)
         self.loop.call_soon_threadsafe(invoke)
+    def off(self,kind,handler):
+        if handler in self.handlers[kind]:self.handlers[kind].remove(handler)
     async def connect(self):
         self.loop=asyncio.get_running_loop()
         with self.hub.lock:
@@ -34,6 +36,8 @@ class Client:
         with self.hub.lock:
             self.hub.messages.append(data)
             if to in self.hub.clients:self.hub.clients[to].deliver(Direct(self.id,data))
+    async def unsubscribe(self,room):
+        with self.hub.lock:self.hub.rooms[room].discard(self.id)
     async def close(self):
         with self.hub.lock:
             self.hub.clients.pop(self.id,None)

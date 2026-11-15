@@ -70,3 +70,9 @@ O Desk instalado verifica atualizações ao abrir e a cada cinco minutos. O usu�
 ## Correções 0.12.1
 
 Favoritos e recentes são consolidados por identidade/endereço, mantendo o acesso autorizado e o nome escolhido. A migração guarda uma cópia protegida do perfil e não muda o número fixo. Limites do serviço são diferenciados de dispositivo ausente. A configuração salva do serviço volta a funcionar após reabrir mesmo sem internet.json; instalações novas mostram claramente quando precisam importar a configuração privada. O controle de consultas ao número usa uma janela curta e não um limite para toda a duração do convite. Três endereços sintéticos foram registrados simultaneamente no serviço público e localizados com uma quarta conexão; isso não substitui o teste do PC físico indisponível.
+
+## Avisos e busca rápida — 0.12.2
+
+A localização por número reaproveita a conexão de sinalização já aberta quando disponível. O pedido pode mostrar um aviso antecipado de preparação na outra ponta, antes da negociação da imagem. Esse aviso não aceita a sessão nem concede acesso. O primeiro aceite com a opção de reconexão autoriza somente a chave do dispositivo; revogação e permissões existentes são preservadas.
+
+Mensagens e arquivos recebidos mostram um aviso discreto; pedidos de conexão, destino de arquivo e ações que exigem confirmação trazem a janela do Desk e o diálogo para a frente. Configurações > Notificações permite ajustar avisos, prévias e foco e fazer um teste local. O Windows ainda pode limitar ativação de janelas, especialmente em áreas de trabalho protegidas.

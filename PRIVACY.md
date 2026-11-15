@@ -36,3 +36,7 @@ Os modos de diagnóstico de conexão usam telas, comandos simulados e arquivos t
 ## Contato
 
 Use os canais do [repositório](https://github.com/Danilo412/Desk) para dúvidas gerais, sem anexar segredos ou dados de tela. Esta política deverá ser revista se forem adicionados novos serviços ou formas de coleta de dados.
+
+## Notificações locais
+
+Avisos podem mostrar uma prévia da conversa e o nome de um arquivo na tela local. É possível ocultar prévias ou desativar avisos nas configurações. O aviso antecipado de conexão contém apenas um estado de preparação e não substitui o aceite. Não é enviado conteúdo de conversa a um serviço externo de notificações.
