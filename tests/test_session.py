@@ -83,6 +83,13 @@ def test_invitation_single_use_and_automatic_vp8(session):
     host,viewer,backend,events,received,tmp_path,token,consents=session
     assert len(consents)==1
     with pytest.raises((OSError,ConnectionError)):join(token,lambda *a:None,lambda *a:True)
+    # Every frame must contain visible motion. A five-level color ramp only
+    # exceeded the pipeline's motion threshold on wraparound, so a stats sample
+    # could miss its short VP8 interval depending on the runner's scheduling.
+    def moving_capture(source,index,width):
+        backend.counter+=1
+        return Image.new('RGB',(128,128),(255 if backend.counter%2 else 0,80,120))
+    backend.capture=moving_capture
     wait_for(lambda:any(k=='stats' and d['vp8']>0 for k,d in events),timeout=7)
 
 def test_denied_consent_sends_no_screen():
