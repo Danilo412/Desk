@@ -1,7 +1,7 @@
 name: Windows build and tests
 on:
   push:
-    branches: [main, service-preview, fix/control-service-routing, fix/service-identity-without-token, feat/password-access]
+    branches: [main, service-preview, fix/control-service-routing, fix/service-identity-without-token, feat/password-access, fix/interactive-latency]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -40,7 +40,7 @@ jobs:
         run: python scripts/build_service_installer.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: Desk-0.14.0-Windows-x64-unsigned
+          name: Desk-0.14.1-Windows-x64-unsigned
           path: dist/publish/*
           if-no-files-found: error
           retention-days: 30

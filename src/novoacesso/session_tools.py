@@ -44,8 +44,16 @@ class SessionTools:
                 'Estado':self.session_badge.text() if live else 'Sem sessão ativa',
                 'Duração':self.session_elapsed.text() or '—','Conexão':'—','Proteção':'—',
                 'Tela recebida':'—','Exibição':self.display.currentText(),'Qualidade solicitada':self.quality.currentText(),
-                'Mouse e teclado':'Não permitido','Texto copiado':'Não permitido','Áudio':'Não permitido'}
+                'Mouse e teclado':'Não permitido','Texto copiado':'Não permitido','Áudio':'Não permitido',
+                'Rota ICE':'—','Fluxo recebido':'—','Captura e codificação':'—','Entrega do quadro':'—','Controle remoto':'—'}
         if not live:return result
+        stats=getattr(self,'_last_stream_stats',{})
+        def metric(key):
+            value=stats.get(key)
+            return f'{value:.1f}' if type(value) in (int,float) and 0<=value<1e8 else '—'
+        result['Captura e codificação']=f"{stats.get('capture','—') if stats.get('capture') in ('MSS','DXGI','Serviço Windows') else '—'} · captura {metric('capture_ms')} ms · codificação {metric('encode_ms')} ms"
+        result['Entrega do quadro']=f"{metric('delivery_ms')} ms · fila {metric('pending_frames')} quadros / {metric('pending_kib')} KiB"
+        result['Controle remoto']=('Canal dedicado' if getattr(getattr(peer,'fast_input',None),'active',False) or stats.get('input_fast')==1 else 'Canal principal')+f" · aplicação {metric('input_apply_ms')} ms"
         permissions=getattr(peer,'permissions',{})
         for key,title in [('control','Mouse e teclado'),('clipboard','Texto copiado'),('audio','Áudio')]:
             result[title]='Permitido' if permissions.get(key) is True else 'Não permitido'

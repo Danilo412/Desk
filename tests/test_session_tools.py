@@ -38,6 +38,23 @@ def test_information_updates_on_permission_change_and_disconnection(tmp_path,mon
         assert values['Estado'].text()=='Sem sessão ativa' and values['Proteção'].text()=='—'
     finally:dialog.close();window.peer=None;window.close();QTest.qWait(20)
 
+
+def test_information_rows_remain_available_before_first_metrics(tmp_path,monkeypatch):
+    monkeypatch.setenv('NOVOACESSO_STATE_DIR',str(tmp_path));window=MainWindow();window.peer=viewer_peer([])
+    dialog=window.build_session_information_window()
+    try:
+        dialog.show();QTest.qWait(20)
+        window.peer.receive_metrics=dict(received_fps=30,received_kbps=1200,decode_ms=6)
+        window._last_stream_stats=dict(capture='MSS',capture_ms=115,encode_ms=12,delivery_ms=145,pending_frames=2,pending_kib=64,input_apply_ms=90,input_fast=1)
+        QTest.qWait(600)
+        values=dialog.information_labels
+        assert 'captura 115.0 ms' in values['Captura e codificação'].text()
+        assert 'codificação 12.0 ms' in values['Captura e codificação'].text()
+        assert 'Canal dedicado' in values['Controle remoto'].text()
+        assert '30.0 FPS' in values['Fluxo recebido'].text()
+        assert '145.0 ms' in values['Entrega do quadro'].text()
+    finally:dialog.close();window.peer=None;window.close();QTest.qWait(20)
+
 def test_fullscreen_image_menu_and_pin_preserve_escape(tmp_path,monkeypatch):
     monkeypatch.setenv('NOVOACESSO_STATE_DIR',str(tmp_path));window=MainWindow();window.peer=viewer_peer([]);window.update_session_actions();window.show()
     try:

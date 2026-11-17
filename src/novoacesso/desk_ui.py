@@ -949,7 +949,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
             from pathlib import Path
             target=Path(path)
             if target.exists() and target.stat().st_size>2*1024*1024:return
-            values={k:v for source in (stats,received) for k,v in source.items() if k in ('width','height','encode_ms','rtt_ms','delivery_ms','effective_fps','received_fps','decode_ms','received_kbps','deflate','vp8') and type(v) in (int,float)}
+            values={k:v for source in (stats,received) for k,v in source.items() if k in ('width','height','capture_ms','encode_ms','rtt_ms','delivery_ms','input_apply_ms','input_fast','pending_frames','pending_kib','effective_fps','received_fps','decode_ms','received_kbps','deflate','vp8') and type(v) in (int,float)}
             outer=getattr(getattr(getattr(self.peer,'channel',None),'sock',None),'outer',None)
             pairs=getattr(outer,'candidate_types',[])
             values.update(time_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),candidate_types=[[a,b] for a,b in pairs if a in ('host','srflx','prflx','relay') and b in ('host','srflx','prflx','relay')],force_relay=bool(getattr(outer,'relay_only',False)))

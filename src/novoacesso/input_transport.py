@@ -80,7 +80,7 @@ class FastInput:
             if not receiver:continue
             value=receiver.open(packet)
             if value is None:continue
-            self.received+=1;self.active=True;self.peer.apply_input(value)
+            self.received+=1;self.active=True;self.peer.input_dispatch.put(value)
     def stop(self):
         if self.outer and getattr(self.outer,'input_handler',None)==self.enqueue:self.outer.input_handler=None
         self.sender=None;self.receiver=None;self.ready.clear()

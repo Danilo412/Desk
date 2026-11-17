@@ -7,7 +7,7 @@ from __future__ import annotations
 import struct
 import time
 import zlib
-import hashlib
+import numpy as np
 from fractions import Fraction
 from PIL import Image
 import av
@@ -51,7 +51,7 @@ class ActivitySelector:
 
 class ScreenEncoder:
     def __init__(self):
-        self.size=None;self.last={};self.selector=ActivitySelector();self.contexts={};self.seq=0
+        self.size=None;self.previous_raw=None;self.selector=ActivitySelector();self.contexts={};self.seq=0
         self.total_deflate=0;self.total_vp8=0;self.frames=0;self.last_refresh=time.monotonic()
 
     def _vp8(self,index,tile):
@@ -73,25 +73,38 @@ class ScreenEncoder:
         image=image.convert("RGB")
         if image.width>MAX_WIDTH or image.height>MAX_HEIGHT or image.width*image.height>MAX_PIXELS:raise ProtocolError("Resolução excedida.")
         if image.size!=self.size:
-            self.size=image.size;self.last.clear();self.contexts.clear();self.selector=ActivitySelector(now)
-        tiles={};changed=set()
-        # Comparação de 16×16, agrupada em blocos 64×64; um incremento por quadro.
-        for y in range(0,image.height,TILE):
-            for x in range(0,image.width,TILE):
-                index=(x,y);tile=image.crop((x,y,x+TILE,y+TILE))
-                values=hashlib.blake2b(tile.tobytes(),digest_size=8).digest()
-                if self.last.get(index)!=values:changed.add(index)
-                tiles[index]=(tile,values)
+            self.size=image.size;self.previous_raw=None;self.contexts.clear();self.selector=ActivitySelector(now)
+        raw=image.tobytes();changed=set()
+        if self.previous_raw is None:
+            changed={(x,y) for y in range(0,image.height,TILE) for x in range(0,image.width,TILE)}
+        elif raw!=self.previous_raw:
+            # Compare pixels in bulk, then allocate only changed tiles. Retain
+            # immutable bytes: callers may modify the PIL image after encoding.
+            rows=(image.height+TILE-1)//TILE;columns=(image.width+TILE-1)//TILE
+            different=(np.frombuffer(raw,dtype=np.uint8)!=np.frombuffer(self.previous_raw,dtype=np.uint8)).reshape(image.height,image.width*3)
+            if image.width%TILE:different=np.pad(different,((0,0),(0,(columns*TILE-image.width)*3)))
+            # Reduce contiguous RGB bytes first, avoiding a strided per-pixel
+            # channel reduction over the entire desktop.
+            bands=different.reshape(image.height,columns,TILE*3).any(axis=2)
+            if image.height%TILE:bands=np.pad(bands,((0,rows*TILE-image.height),(0,0)))
+            dirty=bands.reshape(rows,TILE,columns).any(axis=1)
+            ys,xs=np.nonzero(dirty)
+            changed={(int(x)*TILE,int(y)*TILE) for y,x in zip(ys,xs)}
+        self.previous_raw=raw
         self.selector.observe(changed,now)
         # Transporte confiável: blocos estáticos já recebidos não precisam ser
         # retransmitidos periodicamente. Trocas VP8/sem perda ainda são enviadas.
         refresh=False
         records=[];deflates=vp8s=0
-        for index,(tile,values) in tiles.items():
+        # Existing video contexts may need a lossless restoration even if no
+        # pixel changed. Preserve their codec transition and selector timing.
+        candidates=changed|set(self.contexts)|set(self.selector.active)|{i for i,rate in self.selector.rates.items() if rate>=20}
+        if mode=='vp8':candidates={(x,y) for y in range(0,image.height,TILE) for x in range(0,image.width,TILE)}
+        for index in sorted(candidates,key=lambda p:(p[1],p[0])):
             use_vp8=self.selector.choose(index,now,mode)
             codec_changed=use_vp8!=(index in self.contexts)
             if index not in changed and not codec_changed and not refresh:continue
-            self.last[index]=values
+            tile=image.crop((index[0],index[1],index[0]+TILE,index[1]+TILE))
             if use_vp8:
                 payload=self._vp8(index,tile);kind=1;vp8s+=1
             else:

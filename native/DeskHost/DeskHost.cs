@@ -21,8 +21,8 @@ using Microsoft.Win32.SafeHandles;
 using Microsoft.Win32;
 [assembly:AssemblyTitle("Desk - screen broker")]
 [assembly:AssemblyProduct("Desk")]
-[assembly:AssemblyVersion("0.14.0.0")]
-[assembly:AssemblyFileVersion("0.14.0.0")]
+[assembly:AssemblyVersion("0.14.1.0")]
+[assembly:AssemblyFileVersion("0.14.1.0")]
 [assembly:DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
 
 namespace DeskHost {

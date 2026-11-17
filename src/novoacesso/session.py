@@ -36,11 +36,16 @@ class Peer:
         self.fast_input=FastInput(self);self.input_route_lock=threading.RLock();self.input_lock=threading.RLock()
         self.control_state='desktop';self.control_diagnostic={}
         self.receive_metrics={}
+        self.input_apply_ms=0.
         self.authorization_check=None
         self.video_queue=queue.Queue(maxsize=2)
         self.file_send_queue=queue.Queue(maxsize=32);self.file_sender_running=False
         from .input_dispatch import InputDispatcher
-        self.input_dispatch=InputDispatcher(self._dispatch_input,self.closed,lambda:self.role=='viewer' and self.permissions.get('control',False),self.close)
+        # Host input must not hold the receive thread while Windows/the broker
+        # responds. Coalesce consecutive moves on both ends, retaining every
+        # button, key and release in order. apply_input remains the permission
+        # and revocation gate at the moment of actual application.
+        self.input_dispatch=InputDispatcher(self._dispatch_input if role=='viewer' else self.apply_input,self.closed,lambda:self.permissions.get('control',False),self.close)
 
     def spawn(self,fn):
         thread=threading.Thread(target=fn,daemon=True);self.workers.append(thread);thread.start();return thread
@@ -97,7 +102,10 @@ class Peer:
             if self.authorization_check and not self.authorization_check():self.close('Acesso por senha revogado localmente.');return
             if self.control_state=='protected':return
             try:
+                input_begin=time.monotonic()
                 self.backend.input(msg)
+                measured=(time.monotonic()-input_begin)*1000
+                self.input_apply_ms=.7*self.input_apply_ms+.3*measured if self.input_apply_ms else measured
                 if self.control_state=='denied':self.report_control_state('desktop')
             except OSError as error:
                 code=getattr(error,'winerror',None)
@@ -115,6 +123,7 @@ class Peer:
         if self.role!="host":return
         with self.input_lock:
             old=self.permissions.copy();self.permissions.update(permissions)
+            if old.get('control') and not self.permissions.get('control'):self.input_dispatch.stop()
             if old.get('control') and not self.permissions.get('control') and self.backend:self.backend.release()
             if old.get('control') and not self.permissions.get('control') and callable(getattr(self.backend,'end_secure_session',None)):self.backend.end_secure_session()
             if not old.get('control') and self.permissions.get('control') and callable(getattr(self.backend,'begin_secure_session',None)):self.backend.begin_secure_session()
@@ -176,6 +185,7 @@ class Peer:
                         if modern:self.quality.observe(fps,self.quality.encode_ms,2)
                         self.closed.wait(.01);continue
                     if hasattr(source,'separate_cursor'):source.separate_cursor=bool(self.permissions.get('control'))
+                    capture_begin=time.monotonic()
                     try:image=self.backend.capture(source,monitor,width)
                     except Exception:
                         probe=getattr(self.backend,'input_desktop_state',None)
@@ -206,7 +216,8 @@ class Peer:
                     if begin-last_stats>=1:
                         last_stats=begin
                         outer=getattr(self.channel.sock,'outer',None)
-                        report=dict(**stats,frames=encoder.frames,seconds=begin-started,bytes=sent,**self.quality.snapshot(),capture=getattr(source,'backend','MSS'),route=getattr(outer,'route_info','TLS direto' if outer is None else 'Relay TCP'))
+                        with self.feedback_lock:pending_frames=len(self.sent_frames);pending_kib=sum(self.sent_frame_bytes.values())/1024
+                        report=dict(**stats,frames=encoder.frames,seconds=begin-started,bytes=sent,**self.quality.snapshot(),capture_ms=round((encode_begin-capture_begin)*1000,2),input_apply_ms=round(self.input_apply_ms,2),pending_frames=pending_frames,pending_kib=round(pending_kib,1),input_fast=int(self.fast_input.active),control_route='service' if getattr(self.backend,'service_input_route',False) else 'windows',capture=getattr(source,'backend','MSS'),route=getattr(outer,'route_info','TLS direto' if outer is None else 'Relay TCP'))
                         self.event("stats",report)
                         self.channel.control(dict(type="stats",values=report))
                     self.closed.wait(max(0,1/(effective if modern else fps)-(time.monotonic()-begin)))
@@ -302,7 +313,7 @@ class Peer:
             if not isinstance(name,str) or len(name)>80:raise ProtocolError('Nome do computador inválido.')
             self.event('permanent_profile',{'profile':token,'name':name})
         elif kind=="input" and self.role=="host" and self.permissions.get("control",False):
-            self.apply_input(msg)
+            self.input_dispatch.put(msg)
         elif kind=="permissions" and self.role=="viewer":
             values=msg.get("values",{})
             if not isinstance(values,dict):raise ProtocolError("Permissões inválidas.")

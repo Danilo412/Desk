@@ -23,6 +23,6 @@ class InputDispatcher:
                 while not self.queue and not self.closed.is_set():self.condition.wait(.1)
                 if self.closed.is_set():return
                 value=self.queue.popleft()
-            if self.allowed() or value.get('event')=='release':self.send(dict(type='input',**value))
+            if self.allowed() or value.get('event')=='release':self.send(dict(value,type='input'))
     def stop(self):
         with self.condition:self.queue.clear();self.condition.notify_all()

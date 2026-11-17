@@ -1,6 +1,6 @@
-DESK 0.14.0 — PRÉVIA DO ACESSO POR NÚMERO E SENHA
+DESK 0.14.1 — PRÉVIA DE FLUIDEZ E CONTROLE
 
-Atualize o aplicativo nas duas pontas com Desk-0.14.0-Update.exe.
+Atualize o aplicativo nas duas pontas com Desk-0.14.1-Update.exe.
 O número fixo, a configuração de internet e os acessos salvos são preservados.
 
 No computador que receberá o acesso, abra Configurações > Acesso sem supervisão.
@@ -30,7 +30,7 @@ administrador e vinculado ao Desk.exe exato, fornece captura e entrada nas
 telas protegidas durante sessões autorizadas. Não é necessário executar
 toda a interface como administrador a cada abertura.
 Para atualizar o serviço, remova apenas “Desk - Serviço de tela de bloqueio”
-antigo, instale o aplicativo novo e depois Desk-Service-0.14.0-Setup.exe.
+antigo, instale o aplicativo novo e depois Desk-Service-0.14.1-Setup.exe.
 Selecione o Desk.exe novo e aprove a versão exata para teste pessoal.
 O Windows continuará exigindo as aprovações pertinentes. Não são criadas
 exceções de antivírus, certificados raiz ou desvios das proteções do sistema.
@@ -39,3 +39,11 @@ Os instaladores são uma prévia sem assinatura digital. O canal estável não
 foi alterado. Os testes reais de senha entre os dois PCs e de tela bloqueada
 precisam ser concluídos com o proprietário. Não envie senhas pelo chat.
 O pacote público não contém identidades nem credenciais privadas de relay.
+
+FLUIDEZ (0.14.1)
+Atualize as duas pontas para aproveitar a codificação otimizada e a fila de entrada no computador acessado.
+Os testes de imagem foram feitos com dados sintéticos, não comprovam o FPS desta máquina.
+A janela Informações da sessão passa a mostrar captura, codificação, fila de quadros e tempo de aplicação do controle.
+Não altera senhas, número fixo, permissões do Windows nem ativa o serviço automaticamente.
+A atualização do aplicativo exige renovar o vínculo do serviço de versão exata se ele estiver instalado.
+Os arquivos novos continuam sem assinatura Authenticode e podem ser bloqueados pelo Windows.
