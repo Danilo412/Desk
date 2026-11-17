@@ -359,7 +359,9 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         service_title=QLabel('Mouse, teclado e tela de bloqueio');service_title.setObjectName('sectionTitle');service_layout.addWidget(service_title)
         self.service_registration_status=hint('');self.service_registration_status.setAccessibleName('Estado do serviço de controle')
         service_layout.addWidget(self.service_registration_status)
-        service_layout.addWidget(action_button('Verificar serviço de controle',self.refresh_service_registration),0,Qt.AlignmentFlag.AlignLeft)
+        self.service_check_count=0
+        self.service_check_button=action_button('Verificar serviço de controle',lambda:self.refresh_service_registration(feedback=True))
+        service_layout.addWidget(self.service_check_button,0,Qt.AlignmentFlag.AlignLeft)
         access.addWidget(service_box);self.refresh_service_registration()
         self.unattended=QCheckBox('Habilitar acesso permanente por dispositivos autorizados');self.unattended.setChecked(settings.get('unattended',False));self.unattended.toggled.connect(self.unattended_changed);access.addWidget(self.unattended)
         self.autostart=QCheckBox('Iniciar com o Windows, após meu login');self.autostart.setChecked(settings.get('autostart',False));self.autostart.toggled.connect(self.autostart_changed);access.addWidget(self.autostart)
@@ -406,7 +408,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         self.settings_navigation.currentRowChanged.connect(lambda index:self.refresh_service_registration() if index==1 else None)
         self.settings_page=page;self.tabs.addTab(page,'Configurações');self.refresh_trusted()
 
-    def refresh_service_registration(self):
+    def refresh_service_registration(self,feedback=False):
         # Read-only registration check. Does not start a privileged lease,
         # grant input permission, or change Windows/service settings.
         from .service_client import installed_configuration
@@ -429,6 +431,10 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
             else:
                 text+=' O serviço não respondeu nesta sessão.'
                 if type(getattr(broker,'last_error_code',None)) is int:text+=' Código do Windows: '+str(broker.last_error_code)+'.'
+        if feedback:
+            self.service_check_count+=1
+            text+=' Verificação '+str(self.service_check_count)+' concluída às '+time.strftime('%H:%M:%S')+'.'
+            self.service_check_button.setText('Verificar novamente')
         self.service_registration_status.setText(text)
 
     def open_update_settings(self,check=False):

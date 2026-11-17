@@ -98,7 +98,7 @@ class OVERLAPPED(ctypes.Structure):
 class WindowsPipe:
     """Overlapped, bounded I/O; closing a lease cancels pending requests."""
     def __init__(self,config):
-        self.api=ctypes.WinDLL('kernel32',use_last_error=True);self.security=ctypes.WinDLL('advapi32',use_last_error=True);self.handle=None;self.state_lock=threading.Lock();self.closing=False;self.active=0
+        self.api=ctypes.WinDLL('kernel32',use_last_error=True);self.handle=None;self.state_lock=threading.Lock();self.closing=False;self.active=0
         signatures={
             'WaitNamedPipeW':([wintypes.LPCWSTR,wintypes.DWORD],wintypes.BOOL),
             'CreateFileW':([wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,ctypes.c_void_p,wintypes.DWORD,wintypes.DWORD,wintypes.HANDLE],wintypes.HANDLE),
@@ -110,46 +110,29 @@ class WindowsPipe:
             'GetOverlappedResult':([wintypes.HANDLE,ctypes.POINTER(OVERLAPPED),ctypes.POINTER(wintypes.DWORD),wintypes.BOOL],wintypes.BOOL),
             'CancelIoEx':([wintypes.HANDLE,ctypes.POINTER(OVERLAPPED)],wintypes.BOOL),
             'GetNamedPipeServerProcessId':([wintypes.HANDLE,ctypes.POINTER(wintypes.ULONG)],wintypes.BOOL),
-            'OpenProcess':([wintypes.DWORD,wintypes.BOOL,wintypes.DWORD],wintypes.HANDLE),
-            'ProcessIdToSessionId':([wintypes.DWORD,ctypes.POINTER(wintypes.DWORD)],wintypes.BOOL),
-            'QueryFullProcessImageNameW':([wintypes.HANDLE,wintypes.DWORD,wintypes.LPWSTR,ctypes.POINTER(wintypes.DWORD)],wintypes.BOOL),
-            'LocalFree':([ctypes.c_void_p],ctypes.c_void_p),
+            'GetNamedPipeServerSessionId':([wintypes.HANDLE,ctypes.POINTER(wintypes.ULONG)],wintypes.BOOL),
         }
         for name,(args,result) in signatures.items():fn=getattr(self.api,name);fn.argtypes=args;fn.restype=result
-        self.security.OpenProcessToken.argtypes=[wintypes.HANDLE,wintypes.DWORD,ctypes.POINTER(wintypes.HANDLE)];self.security.OpenProcessToken.restype=wintypes.BOOL
-        self.security.GetTokenInformation.argtypes=[wintypes.HANDLE,ctypes.c_int,ctypes.c_void_p,wintypes.DWORD,ctypes.POINTER(wintypes.DWORD)];self.security.GetTokenInformation.restype=wintypes.BOOL
-        self.security.ConvertSidToStringSidW.argtypes=[ctypes.c_void_p,ctypes.POINTER(wintypes.LPWSTR)];self.security.ConvertSidToStringSidW.restype=wintypes.BOOL
         name=r'\\.\pipe\DeskHost.'+config['OwnerSid']
-        if not self.api.WaitNamedPipeW(name,2000):raise OSError('O serviço de tela de bloqueio não está disponível.')
+        if not self.api.WaitNamedPipeW(name,2000):raise ctypes.WinError(ctypes.get_last_error())
         handle=self.api.CreateFileW(name,0xC0000000,0,None,3,0x40000000|0x00110000,None)
-        if handle==ctypes.c_void_p(-1).value:raise OSError('Não foi possível abrir o serviço autorizado.')
+        if handle==ctypes.c_void_p(-1).value:raise ctypes.WinError(ctypes.get_last_error())
         self.handle=handle
         try:self.verify_server(config)
         except Exception:self.close();raise
 
     def verify_server(self,config):
+        from .service_identity import service_identity_snapshot,validate_service_identity
         pid=wintypes.ULONG();session=wintypes.DWORD()
-        if not self.api.GetNamedPipeServerProcessId(self.handle,ctypes.byref(pid)) or not self.api.ProcessIdToSessionId(pid.value,ctypes.byref(session)) or session.value!=0:raise OSError('Servidor de serviço inválido.')
-        process=self.api.OpenProcess(0x1000,False,pid.value)
-        if not process:raise OSError('Identidade do serviço indisponível.')
-        token=wintypes.HANDLE()
-        try:
-            name=ctypes.create_unicode_buffer(32768);count=wintypes.DWORD(len(name))
-            if not self.api.QueryFullProcessImageNameW(process,0,name,ctypes.byref(count)) or os.path.normcase(name.value)!=os.path.normcase(config['ServicePath']):raise OSError('Caminho do serviço inválido.')
-            if hashlib.sha256(Path(name.value).read_bytes()).hexdigest()!=config['ServiceHash']:raise OSError('O serviço não corresponde à instalação autorizada.')
-            if not self.security.OpenProcessToken(process,8,ctypes.byref(token)):raise OSError('Token do serviço indisponível.')
-            needed=wintypes.DWORD();self.security.GetTokenInformation(token,1,None,0,ctypes.byref(needed))
-            if not 8<=needed.value<=65536:raise OSError('Token inválido.')
-            buffer=ctypes.create_string_buffer(needed.value)
-            if not self.security.GetTokenInformation(token,1,buffer,len(buffer),ctypes.byref(needed)):raise OSError('Token inválido.')
-            sid=ctypes.cast(buffer,ctypes.POINTER(ctypes.c_void_p))[0];text=wintypes.LPWSTR()
-            if not self.security.ConvertSidToStringSidW(sid,ctypes.byref(text)):raise OSError('Identidade do serviço inválida.')
-            try:
-                if text.value!='S-1-5-18':raise OSError('O servidor não é o serviço de sistema autorizado.')
-            finally:self.api.LocalFree(ctypes.cast(text,ctypes.c_void_p))
-        finally:
-            if token:self.api.CloseHandle(token)
-            self.api.CloseHandle(process)
+        if not self.api.GetNamedPipeServerProcessId(self.handle,ctypes.byref(pid)) or not self.api.GetNamedPipeServerSessionId(self.handle,ctypes.byref(session)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        before=service_identity_snapshot()
+        validate_service_identity(config,before,pid.value,session.value)
+        if hashlib.sha256(Path(config['ServicePath']).read_bytes()).hexdigest()!=config['ServiceHash']:
+            raise OSError('O serviço não corresponde à instalação autorizada.')
+        after=service_identity_snapshot()
+        validate_service_identity(config,after,pid.value,session.value)
+        if before!=after:raise OSError('O serviço mudou durante a verificação de identidade.')
 
     def _io(self,data,size,write,deadline):
         with self.state_lock:
@@ -227,9 +210,15 @@ class BrokerClient:
             with self.state_lock:
                 if not self.authorized or not self.config:raise OSError('O serviço não está instalado e autorizado para esta sessão.')
                 lease=self.lease
-                if self.connection is None:self.connection=self.connector(self.config)
                 connection=self.connection
             try:
+                if connection is None:
+                    connection=self.connector(self.config)
+                    with self.state_lock:
+                        if not self.authorized or self.lease!=lease:
+                            connection.close();connection=None
+                            raise OSError('A autorização da sessão foi encerrada.')
+                        self.connection=connection
                 reply=connection.exchange(payload,timeout)
                 with self.state_lock:
                     if not self.authorized or self.lease!=lease:raise OSError('A autorização da sessão foi encerrada.')
@@ -242,7 +231,8 @@ class BrokerClient:
                 self.last_error_code=code if type(code) is int and 0<=code<=65535 else None
                 with self.state_lock:
                     if self.connection is connection:self.connection=None
-                connection.close();raise
+                if connection:connection.close()
+                raise
     def available(self):
         if not self.authorized:return False
         self._load_missing_configuration()

@@ -1,14 +1,14 @@
-DESK 0.13.1 — TESTE DO CONTROLE E DO SERVIÇO
+DESK 0.13.2 — TESTE DO CONTROLE E DO SERVIÇO
 
 Instale na máquina que será acessada, no perfil de usuário que já usa o Desk.
-Se já houver um serviço Desk 0.13.0 instalado, remova apenas o aplicativo
+Se já houver um serviço Desk de versão anterior instalado, remova apenas o aplicativo
 "Desk - Serviço de tela de bloqueio" em Aplicativos instalados do Windows,
 aprovando como administrador. Não remova o Desk nem seus dados de usuário.
 O instalador novo não sobrescreve um serviço antigo em execução.
 1. Encerre a sessão remota e saia do Desk pelo menu > Sair do Desk.
-2. Instale Desk-0.13.1-Update.exe. Seu número fixo e suas configurações locais
-   são preservados. Confira em Configurações > Atualizações: versão 0.13.1.
-3. Execute Desk-Service-0.13.1-Setup.exe e aprove a solicitação de administrador.
+2. Instale Desk-0.13.2-Update.exe. Seu número fixo e suas configurações locais
+   são preservados. Confira em Configurações > Atualizações: versão 0.13.2.
+3. Execute Desk-Service-0.13.2-Setup.exe e aprove a solicitação de administrador.
    Selecione o Desk.exe recém-instalado e marque a aprovação da versão exata
    para teste pessoal. O vínculo anterior precisa ser substituído por este.
 4. Abra o Desk e confira Configurações > Acesso sem supervisão >
@@ -26,8 +26,11 @@ exclusões de antivírus, exceções de política ou certificados raiz.
 
 O modo pessoal vincula o usuário, o caminho e as versões exatas aprovadas pelo
 administrador. Uma atualização do Desk exige renovar esse vínculo. O serviço
-0.13.1 acrescenta verificação da troca de desktop antes de injetar entrada;
+0.13.2 acrescenta verificação da troca de desktop antes de injetar entrada;
 isso evita reutilizar uma captura antiga após bloquear/desbloquear o Windows.
+A 0.13.2 verifica a identidade do serviço pelo gerenciador de serviços do Windows,
+sem tentar abrir o processo ou o token da conta SYSTEM pelo aplicativo comum.
+O botão de verificação também mostra a hora e o número da consulta.
 Este pacote é uma prévia para teste; a validação entre computadores ainda
 precisa ser concluída. A liberação anterior da Microsoft foi para o instalador
 0.13.0 e não constitui assinatura digital deste novo pacote.
