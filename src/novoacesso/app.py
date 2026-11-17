@@ -730,7 +730,15 @@ class MainWindow(DeskShell,QMainWindow):
         self.canvas.allow_control=bool(self.peer and self.peer.role=="viewer" and self.peer.permissions.get("control") and self.control.isChecked() and not blocked)
         if self.peer and self.peer.role=='viewer':
             self.control_hint.setText('O Windows remoto está bloqueado. O serviço de tela de senha precisa estar instalado e autorizado na outra máquina.' if blocked else 'Controle ativo. Clique na imagem remota para usar mouse e teclado.' if self.canvas.allow_control else 'Somente visualização. Marque Mouse e teclado.' if self.peer.permissions.get('control') else 'O computador remoto ainda precisa autorizar mouse e teclado em Nova conexão.')
-            if getattr(self.peer,'control_state','desktop')=='denied':self.control_hint.setText('O Windows remoto recusou a entrada. Confira a permissão de controle e o serviço autorizado no computador remoto.')
+            if getattr(self.peer,'control_state','desktop')=='denied':
+                diagnostic=getattr(self.peer,'control_diagnostic',{});reason=diagnostic.get('reason')
+                text={'capture_required':'Aguarde a primeira imagem remota para usar mouse e teclado.',
+                    'geometry_mismatch':'O serviço e a imagem remota apontam para telas diferentes. Reconecte antes de controlar.',
+                    'desktop_changed':'O Windows mudou de tela. Aguarde a imagem atualizada antes de controlar.',
+                    'service_unavailable':'O serviço de controle não respondeu. Confira o serviço em Configurações > Acesso sem supervisão no computador remoto.'}.get(reason,
+                    'O Windows remoto recusou a entrada. Confira a permissão de controle e o serviço autorizado no computador remoto.')
+                if type(diagnostic.get('code')) is int:text+=' Código do Windows: '+str(diagnostic['code'])+'.'
+                self.control_hint.setText(text)
         elif self.peer:self.control_hint.setText('Você está compartilhando. As permissões podem ser retiradas em Nova conexão.')
         if not self.canvas.allow_control:self.send_input(dict(event="release"))
         self.canvas.update_remote_cursor();self.canvas.update()

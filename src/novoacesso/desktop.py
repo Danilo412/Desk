@@ -20,6 +20,11 @@ class NativeInput(ctypes.Structure):
 BUTTON_FLAGS={'left':(0x2,0x4,0),'right':(0x8,0x10,0),'middle':(0x20,0x40,0),'back':(0x80,0x100,1),'forward':(0x80,0x100,2)}
 EXTENDED_KEYS={0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x2d,0x2e,0x5b,0x5c,0x5d,0x6f,0xa3,0xa5}
 
+class DesktopInputError(OSError):
+    def __init__(self,code=None,backend='windows',reason='input_rejected'):
+        super().__init__(code,'O Windows não aceitou a entrada nesta sessão.')
+        self.input_backend=backend;self.input_reason=reason
+
 class CursorInfo(ctypes.Structure):
     _fields_=[('cbSize',wintypes.DWORD),('flags',wintypes.DWORD),('hCursor',wintypes.HANDLE),('ptScreenPos',wintypes.POINT)]
 
@@ -28,6 +33,7 @@ class DesktopBackend:
         self.lock=threading.RLock();self.rect=None;self.virtual_rect=None;self.keys=set();self.buttons=set()
         from .service_client import BrokerClient,WindowsSessionState
         self.secure=BrokerClient();self.session_lock_probe=WindowsSessionState().locked
+        self.service_input_route=False;self.service_input_geometry=None
         self.user=ctypes.WinDLL("user32",use_last_error=True)
         self.user.SendInput.argtypes=[ctypes.c_uint,ctypes.POINTER(NativeInput),ctypes.c_int];self.user.SendInput.restype=ctypes.c_uint
         self.user.GetSystemMetrics.argtypes=[ctypes.c_int];self.user.GetSystemMetrics.restype=ctypes.c_int
@@ -48,7 +54,7 @@ class DesktopBackend:
 
     def _emit(self,event):
         if self.user.SendInput(1,ctypes.byref(event),ctypes.sizeof(NativeInput))!=1:
-            raise OSError(ctypes.get_last_error(),'O Windows não aceitou a entrada nesta sessão.')
+            raise DesktopInputError(ctypes.get_last_error())
     def _mouse(self,flags,data=0,x=None,y=None):
         event=NativeInput();event.type=0;event.mi.dwFlags=flags;event.mi.mouseData=data&0xffffffff
         if x is not None:
@@ -84,10 +90,39 @@ class DesktopBackend:
 
     def begin_secure_session(self):
         self.secure.begin_session()
+        # Choose once for the approved lease, avoiding a mid-drag/key route
+        # change. The broker already supports Default as well as Winlogon.
+        self.service_input_route=self.secure.available()
+        if self.service_input_route:
+            try:self.secure.input_state()
+            except (OSError,ValueError):self.service_input_route=False
+        self.service_input_geometry=None
 
     def end_secure_session(self):
         secure=getattr(self,'secure',None)
         if secure:secure.end_session()
+        self.service_input_route=False;self.service_input_geometry=None
+
+    @staticmethod
+    def _geometry(rect,virtual):
+        return tuple(rect[k] for k in ('left','top','width','height'))+tuple(virtual[k] for k in ('left','top','width','height'))
+
+    def _prepare_service_input(self):
+        if not self.rect or not self.virtual_rect or not hasattr(self,'capture_monitor'):
+            raise DesktopInputError(None,'service','capture_required')
+        expected=self._geometry(self.rect,self.virtual_rect)
+        generation,captured=self.secure.input_state()
+        if captured and getattr(self,'service_input_geometry',None)==(self.capture_monitor,expected,generation):return
+        self.secure.release()
+        _,rect,virtual=self.secure.capture(self.capture_monitor,self.capture_width)
+        # Never inject using a different monitor enumeration or stale DPI
+        # geometry than the frame actually shown to the viewer.
+        if self._geometry(rect,virtual)!=expected:
+            raise DesktopInputError(None,'service','geometry_mismatch')
+        current_generation,captured=self.secure.input_state()
+        if not captured or current_generation!=generation:
+            raise DesktopInputError(None,'service','desktop_changed')
+        self.service_input_geometry=(self.capture_monitor,expected,generation)
 
     def capture_source(self):
         from .capture import CaptureSource
@@ -105,7 +140,9 @@ class DesktopBackend:
         secure=getattr(self,'secure',None)
         if secure and secure.authorized and self.local_desktop_state()=='protected':
             image,rect,virtual=secure.capture(index,width)
-            with self.lock:self.rect=rect;self.virtual_rect=virtual
+            with self.lock:
+                self.rect=rect;self.virtual_rect=virtual;self.capture_monitor=index;self.capture_width=width
+                self.service_input_geometry=None
             if hasattr(source,'backend'):source.backend='Serviço Windows';source.unchanged=False
             return image
         with self.physical_coordinates():return self._capture_physical(source,index,width)
@@ -114,7 +151,8 @@ class DesktopBackend:
         monitors=source.monitors
         if not 0<=index<len(monitors):index=1 if len(monitors)>1 else 0
         rect=monitors[index]
-        with self.lock:self.rect=dict(rect);self.virtual_rect=dict(monitors[0])
+        with self.lock:
+            self.rect=dict(rect);self.virtual_rect=dict(monitors[0]);self.capture_monitor=index;self.capture_width=width
         if hasattr(source,'image'):image=source.image(index)
         else:
             shot=source.grab(rect);image=Image.frombytes("RGB",shot.size,shot.bgra,'raw','BGRX')
@@ -126,7 +164,14 @@ class DesktopBackend:
     def input(self,data):
         with self.lock,self.physical_coordinates():
             secure=getattr(self,'secure',None)
-            if secure and secure.authorized and self.local_desktop_state()=='protected':secure.input(data);return
+            if secure and secure.authorized and (getattr(self,'service_input_route',False) or self.local_desktop_state()=='protected'):
+                if data.get('event')=='release':self.release();return
+                try:
+                    if getattr(self,'service_input_route',False):self._prepare_service_input()
+                    secure.input(data)
+                except DesktopInputError:raise
+                except (OSError,ValueError) as error:raise DesktopInputError(getattr(error,'winerror',None) or getattr(error,'errno',None),'service','service_unavailable') from error
+                return
             kind=data.get("event")
             if kind in ("move","button"):
                 x,y=data.get("x"),data.get("y")

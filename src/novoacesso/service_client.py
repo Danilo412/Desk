@@ -197,37 +197,64 @@ class WindowsPipe:
                 if self.active==0:self.api.CloseHandle(handle);self.handle=None
 
 class BrokerClient:
-    def __init__(self,connector=None,configuration=None):
-        self.connector=connector or WindowsPipe;self.config=configuration if configuration is not None else installed_configuration()
-        self.authorized=False;self.connection=None;self.lock=threading.RLock();self.state_lock=threading.Lock();self.last_error=''
+    def __init__(self,connector=None,configuration=None,configuration_loader=None):
+        self.connector=connector or WindowsPipe
+        self.configuration_loader=configuration_loader or ((lambda:configuration) if configuration is not None else installed_configuration)
+        self.config=self.configuration_loader()
+        self.authorized=False;self.connection=None;self.lock=threading.RLock();self.state_lock=threading.Lock();self.last_error='';self.last_error_code=None;self.lease=0
     @property
     def installed(self):return self.config is not None
     def begin_session(self):
-        self.authorized=True
+        # Installation/rebinding may have happened while the GUI was open.
+        # A new approved session gets a fresh configuration and IPC lease.
+        self.end_session()
+        configuration=self.configuration_loader()
+        with self.state_lock:self.config=configuration;self.authorized=True;self.lease+=1
     def end_session(self):
-        self.authorized=False
-        with self.state_lock:connection=self.connection;self.connection=None
+        with self.state_lock:
+            self.authorized=False;self.lease+=1;connection=self.connection;self.connection=None
         if connection:connection.close()
+    def _load_missing_configuration(self):
+        with self.state_lock:
+            if not self.authorized or self.config is not None:return
+            lease=self.lease
+        configuration=self.configuration_loader()
+        with self.state_lock:
+            if self.authorized and self.lease==lease and self.config is None:self.config=configuration
     def _request(self,payload,timeout=2):
         with self.lock:
-            if not self.authorized or not self.config:raise OSError('O serviço não está instalado e autorizado para esta sessão.')
+            self._load_missing_configuration()
             with self.state_lock:
+                if not self.authorized or not self.config:raise OSError('O serviço não está instalado e autorizado para esta sessão.')
+                lease=self.lease
                 if self.connection is None:self.connection=self.connector(self.config)
                 connection=self.connection
             try:
                 reply=connection.exchange(payload,timeout)
-                if not self.authorized:raise OSError('A autorização da sessão foi encerrada.')
+                with self.state_lock:
+                    if not self.authorized or self.lease!=lease:raise OSError('A autorização da sessão foi encerrada.')
                 if not reply or reply[0]!=0:raise OSError('O serviço recusou esta operação.')
-                self.last_error='';return reply
-            except Exception:
+                self.last_error='';self.last_error_code=None;return reply
+            except Exception as error:
                 self.last_error='Serviço indisponível. Confira a assinatura, a instalação e a autorização de administrador.'
+                code=getattr(error,'winerror',None)
+                if type(code) is not int:code=getattr(error,'errno',None)
+                self.last_error_code=code if type(code) is int and 0<=code<=65535 else None
                 with self.state_lock:
                     if self.connection is connection:self.connection=None
                 connection.close();raise
     def available(self):
-        if not self.installed or not self.authorized:return False
+        if not self.authorized:return False
+        self._load_missing_configuration()
+        if not self.installed:return False
         try:return self._request(b'\x01') in (b'\0\0',b'\0\1')
         except (OSError,ValueError):return False
+    def input_state(self):
+        reply=self._request(b'\x06')
+        if len(reply)!=7:raise ValueError('Estado do serviço incompatível.')
+        desktop,captured,generation=struct.unpack('<BBI',reply[1:])
+        if desktop not in (0,1) or captured not in (0,1) or generation<1:raise ValueError('Estado do serviço inválido.')
+        return generation,bool(captured)
     def capture(self,index,width):
         height=1440 if width>1920 else 1080 if width>=1920 else 720 if width>=1280 else 1080
         request=struct.pack('<BiHHB',3,index,width,height,1)

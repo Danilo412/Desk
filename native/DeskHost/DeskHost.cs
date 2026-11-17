@@ -21,8 +21,8 @@ using Microsoft.Win32.SafeHandles;
 using Microsoft.Win32;
 [assembly:AssemblyTitle("Desk - screen broker")]
 [assembly:AssemblyProduct("Desk")]
-[assembly:AssemblyVersion("0.13.0.0")]
-[assembly:AssemblyFileVersion("0.13.0.0")]
+[assembly:AssemblyVersion("0.13.1.0")]
+[assembly:AssemblyFileVersion("0.13.1.0")]
 [assembly:DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
 
 namespace DeskHost {
@@ -48,7 +48,7 @@ namespace DeskHost {
         public static void Validate(byte[] p) {
             if(p.Length<1 || p.Length>MaxRequest)throw new InvalidDataException("Packet size");
             byte op=p[0];
-            if(op==1 || op==2 || op==5){if(p.Length!=1)throw new InvalidDataException("Packet size");return;}
+            if(op==1 || op==2 || op==5 || op==6){if(p.Length!=1)throw new InvalidDataException("Packet size");return;}
             if(op==3){if(p.Length!=10)throw new InvalidDataException("Capture request");int monitor=BitConverter.ToInt32(p,1);int width=BitConverter.ToUInt16(p,5),height=BitConverter.ToUInt16(p,7);if(monitor<0 || monitor>32 || width<1 || width>3840 || height<1 || height>2160 || p[9]!=1)throw new InvalidDataException("Capture limits");return;}
             if(op!=4 || p.Length<2)throw new InvalidDataException("Operation");
             int kind=p[1];int length=kind==1?18:kind==2?5:kind==3?20:kind==4?6:kind==5?2:0;
@@ -200,7 +200,7 @@ namespace DeskHost {
     }
 
     sealed class DesktopAgent:IDisposable {
-        IntPtr desktop=IntPtr.Zero;string desktopName="";Native.RECT selected,virtualRect;bool captured;HashSet<ushort> keys=new HashSet<ushort>();HashSet<byte> buttons=new HashSet<byte>();
+        IntPtr desktop=IntPtr.Zero;string desktopName="";Native.RECT selected,virtualRect;bool captured;uint desktopGeneration;HashSet<ushort> keys=new HashSet<ushort>();HashSet<byte> buttons=new HashSet<byte>();
         public DesktopAgent(){Native.SetProcessDpiAwarenessContext(new IntPtr(-4));Native.SetThreadDpiAwarenessContext(new IntPtr(-4));Native.AdjustTokenPrivilegesDisable();}
         bool Attach(){
             IntPtr next=Native.OpenInputDesktop(0,false,0x1|0x2|0x40|0x80|0x100);if(next==IntPtr.Zero)return false;
@@ -210,12 +210,13 @@ namespace DeskHost {
             if(value==desktopName){Native.CloseDesktop(next);return true;}
             if(!Native.SetThreadDesktop(next)){Native.CloseDesktop(next);return false;}
             Release();
-            IntPtr old=desktop;desktop=next;desktopName=value;captured=false;if(old!=IntPtr.Zero)Native.CloseDesktop(old);return true;
+            IntPtr old=desktop;desktop=next;desktopName=value;captured=false;desktopGeneration++;if(old!=IntPtr.Zero)Native.CloseDesktop(old);return true;
         }
         List<Native.RECT> Monitors(){List<Native.RECT> monitors=new List<Native.RECT>();Native.RECT whole=new Native.RECT();whole.Left=Native.GetSystemMetrics(76);whole.Top=Native.GetSystemMetrics(77);whole.Right=whole.Left+Native.GetSystemMetrics(78);whole.Bottom=whole.Top+Native.GetSystemMetrics(79);monitors.Add(whole);Native.MonitorEnum callback=delegate(IntPtr monitor,IntPtr dc,ref Native.RECT rect,IntPtr unused){monitors.Add(rect);return true;};if(!Native.EnumDisplayMonitors(IntPtr.Zero,IntPtr.Zero,callback,IntPtr.Zero))throw new System.ComponentModel.Win32Exception();return monitors;}
         void Rect(BinaryWriter writer,Native.RECT rect){writer.Write(rect.Left);writer.Write(rect.Top);writer.Write(rect.Right-rect.Left);writer.Write(rect.Bottom-rect.Top);}
         public byte[] Handle(byte[] p){Wire.Validate(p);if(!Attach())return new byte[]{1};
             if(p[0]==1)return Wire.Result(delegate(BinaryWriter w){w.Write((byte)(desktopName=="Default"?0:1));});
+            if(p[0]==6)return Wire.Result(delegate(BinaryWriter w){w.Write((byte)(desktopName=="Default"?0:1));w.Write((byte)(captured?1:0));w.Write(desktopGeneration);});
             if(p[0]==2){List<Native.RECT> ms=Monitors();return Wire.Result(delegate(BinaryWriter w){w.Write((byte)ms.Count);foreach(Native.RECT rect in ms)Rect(w,rect);});}
             if(p[0]==5){Release();return new byte[]{0};}
             if(p[0]==4){Input(p);return new byte[]{0};}
@@ -335,7 +336,7 @@ namespace DeskHost {
 
     static class Program {
         static int Tests(){int tests=0;Action<byte[]> valid=delegate(byte[] p){Wire.Validate(p);tests++;};Action<byte[]> invalid=delegate(byte[] p){try{Wire.Validate(p);}catch(InvalidDataException){tests++;return;}throw new Exception("Invalid request accepted");};
-            valid(new byte[]{1});valid(new byte[]{2});valid(new byte[]{5});valid(new byte[]{4,5});invalid(new byte[]{0});invalid(new byte[]{99});invalid(new byte[]{1,0});invalid(new byte[]{4,2,0,0,1});invalid(new byte[]{4,3,6,1});
+            valid(new byte[]{1});valid(new byte[]{2});valid(new byte[]{5});valid(new byte[]{6});valid(new byte[]{4,5});invalid(new byte[]{0});invalid(new byte[]{99});invalid(new byte[]{1,0});invalid(new byte[]{6,0});invalid(new byte[]{4,2,0,0,1});invalid(new byte[]{4,3,6,1});
             using(MemoryStream s=new MemoryStream())using(BinaryWriter w=new BinaryWriter(s)){w.Write((byte)3);w.Write(1);w.Write((ushort)1920);w.Write((ushort)1080);w.Write((byte)1);byte[] p=s.ToArray();valid(p);p[9]=0;invalid(p);p[9]=1;p[5]=255;p[6]=255;invalid(p);}
             using(MemoryStream s=new MemoryStream())using(BinaryWriter w=new BinaryWriter(s)){w.Write((byte)4);w.Write((byte)1);w.Write(.25);w.Write(.75);byte[] p=s.ToArray();valid(p);Array.Copy(BitConverter.GetBytes(Double.NaN),0,p,2,8);invalid(p);Array.Copy(BitConverter.GetBytes(Double.PositiveInfinity),0,p,2,8);invalid(p);Array.Copy(BitConverter.GetBytes(-.1),0,p,2,8);invalid(p);}
             valid(new byte[]{4,2,65,0,1});invalid(new byte[]{4,2,65,0,2});invalid(new byte[]{4,2,44,1,1});

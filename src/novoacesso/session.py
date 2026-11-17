@@ -34,7 +34,7 @@ class Peer:
         self.fast_audio=FastAudio(self)
         from .input_transport import FastInput
         self.fast_input=FastInput(self);self.input_route_lock=threading.RLock();self.input_lock=threading.RLock()
-        self.control_state='desktop'
+        self.control_state='desktop';self.control_diagnostic={}
         self.receive_metrics={}
         self.video_queue=queue.Queue(maxsize=2)
         self.file_send_queue=queue.Queue(maxsize=32);self.file_sender_running=False
@@ -73,10 +73,11 @@ class Peer:
         with self.input_route_lock:
             if not self.fast_input.send(value):self.send(value)
 
-    def report_control_state(self,state):
-        if state==self.control_state:return
-        self.control_state=state
-        self.send(dict(type='control_state',state=state))
+    def report_control_state(self,state,diagnostic=None):
+        diagnostic=diagnostic or {}
+        if state==self.control_state and diagnostic==self.control_diagnostic:return
+        self.control_state=state;self.control_diagnostic=diagnostic
+        self.send(dict(type='control_state',state=state,diagnostic=diagnostic))
 
     def _desktop_watch(self):
         while not self.closed.is_set():
@@ -95,8 +96,17 @@ class Peer:
             try:
                 self.backend.input(msg)
                 if self.control_state=='denied':self.report_control_state('desktop')
-            except OSError:
-                self.backend.release();self.report_control_state('denied')
+            except OSError as error:
+                code=getattr(error,'winerror',None)
+                if type(code) is not int:code=error.errno
+                diagnostic={}
+                if type(code) is int and 0<=code<=65535:diagnostic['code']=code
+                backend=getattr(error,'input_backend','windows');reason=getattr(error,'input_reason','input_rejected')
+                if backend in ('windows','service'):diagnostic['backend']=backend
+                if reason in ('input_rejected','capture_required','geometry_mismatch','desktop_changed','service_unavailable'):diagnostic['reason']=reason
+                try:self.backend.release()
+                except OSError:pass
+                self.report_control_state('denied',diagnostic)
 
     def set_permissions(self,permissions):
         if self.role!="host":return
@@ -243,7 +253,13 @@ class Peer:
         if kind in ('input_route','input_route_ready'):self.fast_input.handle(msg);return
         if kind=='control_state':
             if self.role=='viewer' and msg.get('state') in ('desktop','protected','denied'):
-                self.control_state=msg['state'];self.event('control_state',dict(state=self.control_state))
+                value=msg.get('diagnostic');diagnostic={}
+                if isinstance(value,dict) and msg['state']=='denied':
+                    if type(value.get('code')) is int and 0<=value['code']<=65535:diagnostic['code']=value['code']
+                    if value.get('backend') in ('windows','service'):diagnostic['backend']=value['backend']
+                    if value.get('reason') in ('input_rejected','capture_required','geometry_mismatch','desktop_changed','service_unavailable'):diagnostic['reason']=value['reason']
+                self.control_state=msg['state'];self.control_diagnostic=diagnostic
+                self.event('control_state',dict(state=self.control_state,diagnostic=diagnostic))
             return
         if kind in ('advanced_request','advanced_result','whiteboard_state','annotation'):
             self.features.handle(msg);return

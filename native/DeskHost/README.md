@@ -56,6 +56,13 @@ commands, process-launch RPC, password APIs or keystroke logs.
 
 Requests are bounded to 512 bytes and restricted to state, monitors, capture,
 typed input and release. Responses are capped at 32 MiB; images at 3840×2160.
+Version 0.13.1 adds a read-only input-state probe (operation 6), returning
+desktop generation and whether capture has primed input. The GUI prefers the
+administrator-bound service for input on Default as well as protected desktops
+only after an approved host-control lease and a successful probe. It compares
+physical geometry with the viewer's frame and re-primes capture on desktop or
+monitor changes. A switch during capture rejects that input; it does not fall
+back to another privilege level. Legacy operation 1 remains unchanged.
 Coordinates refer to the selected capture's physical monitor and virtual
 desktop. Positional and keyboard input requires a capture first. Disconnect or
 permission revocation closes the lease; a 30-second watchdog removes abandoned

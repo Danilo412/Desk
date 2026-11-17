@@ -354,11 +354,15 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         advanced_box.hide();advanced.toggled.connect(lambda on:reveal_widget(advanced_box,on,self));advanced.toggled.connect(lambda on:advanced.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow));connection.addWidget(advanced_box)
         connection.addWidget(action_button('Salvar configuração de conexão',self.apply_network),0,Qt.AlignmentFlag.AlignLeft);connection.addStretch()
         access=section('Acesso sem supervisão','Somente dispositivos autorizados podem voltar sem uma nova solicitação de aceite.')
+        service_box=QFrame();service_box.setObjectName('permissionsPanel');service_layout=QVBoxLayout(service_box)
+        service_layout.setContentsMargins(16,14,16,14);service_layout.setSpacing(8)
+        service_title=QLabel('Mouse, teclado e tela de bloqueio');service_title.setObjectName('sectionTitle');service_layout.addWidget(service_title)
+        self.service_registration_status=hint('');self.service_registration_status.setAccessibleName('Estado do serviço de controle')
+        service_layout.addWidget(self.service_registration_status)
+        service_layout.addWidget(action_button('Verificar serviço de controle',self.refresh_service_registration),0,Qt.AlignmentFlag.AlignLeft)
+        access.addWidget(service_box);self.refresh_service_registration()
         self.unattended=QCheckBox('Habilitar acesso permanente por dispositivos autorizados');self.unattended.setChecked(settings.get('unattended',False));self.unattended.toggled.connect(self.unattended_changed);access.addWidget(self.unattended)
         self.autostart=QCheckBox('Iniciar com o Windows, após meu login');self.autostart.setChecked(settings.get('autostart',False));self.autostart.toggled.connect(self.autostart_changed);access.addWidget(self.autostart)
-        from .service_client import installed_configuration
-        service_configuration=installed_configuration();service_installed=service_configuration is not None
-        access.addWidget(hint('Serviço de tela de bloqueio: '+('registrado para este Desk.' if service_installed else 'não instalado para este Desk.')))
         access.addWidget(hint('A tela de senha exige instalar o serviço e aprovar o acesso como administrador na máquina que será acessada. O modo pessoal fica vinculado a esta versão exata; uma atualização exige nova aprovação. Ele só atende sessões já autorizadas com mouse e teclado. O Desk precisa permanecer aberto após seu login no Windows; esta etapa não oferece conexão antes do primeiro login nem dispensa a senha do Windows.'))
         self.unattended_files=QCheckBox('Receber arquivos autorizados em Downloads sem pedir destino');self.unattended_files.setChecked(settings.get('unattended_files',False));self.unattended_files.toggled.connect(lambda enabled:self.identity.configure(unattended_files=enabled));access.addWidget(self.unattended_files)
         access.addWidget(hint('Faça uma sessão aprovada antes de autorizar um dispositivo. O Desk pede confirmação para ativar o acesso permanente.'))
@@ -399,7 +403,29 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         updates.addWidget(hint('A busca é automática ao abrir e a cada cinco minutos. O download é conferido antes de instalar. Termine a sessão remota para aplicar a atualização; seu número e acessos salvos serão mantidos.'));updates.addStretch()
         for i,icon in enumerate(['connection','lock','monitor','monitor','settings','info','download']):self.settings_navigation.item(i).setIcon(QIcon(str(ASSETS/(icon+'.svg'))))
         self.settings_navigation.currentRowChanged.connect(self.settings_pages.setCurrentIndex);self.settings_navigation.setCurrentRow(0)
+        self.settings_navigation.currentRowChanged.connect(lambda index:self.refresh_service_registration() if index==1 else None)
         self.settings_page=page;self.tabs.addTab(page,'Configurações');self.refresh_trusted()
+
+    def refresh_service_registration(self):
+        # Read-only registration check. Does not start a privileged lease,
+        # grant input permission, or change Windows/service settings.
+        from .service_client import installed_configuration
+        from . import __version__
+        configured=installed_configuration() is not None
+        text='Serviço de tela de bloqueio: '+('registrado para este Desk.' if configured else 'não instalado para este Desk.')
+        text+=' Versão aberta: '+__version__+'.'
+        if not configured:text+=' Instale o serviço correspondente nesta máquina e aprove como administrador.'
+        backend=getattr(self,'backend',None);broker=getattr(backend,'secure',None)
+        # Probe only an already-authorized host lease. Opening this settings
+        # page must never grant a lease or contact SYSTEM on its own.
+        if configured and broker and broker.authorized:
+            if broker.available():
+                text+=' O serviço respondeu.'
+                text+=' Controle pelo serviço ativo.' if getattr(backend,'service_input_route',False) else ' Reconecte para ativar o controle pelo serviço.'
+            else:
+                text+=' O serviço não respondeu nesta sessão.'
+                if type(getattr(broker,'last_error_code',None)) is int:text+=' Código do Windows: '+str(broker.last_error_code)+'.'
+        self.service_registration_status.setText(text)
 
     def open_update_settings(self,check=False):
         if self._fullscreen:self.exit_fullscreen()
@@ -407,6 +433,8 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         if check:self.updates.check(True)
 
     def remote_address_changed(self):
+        private_profile=self.remote_invite.text().strip().startswith(('NA1-','NAU1-'))
+        self.remote_invite.setEchoMode(QLineEdit.EchoMode.Password if private_profile else QLineEdit.EchoMode.Normal)
         self.connect_button.setEnabled(bool(self.remote_invite.text().strip()) and not self.connecting and not self.peer)
 
     def focus_remote_address(self):
