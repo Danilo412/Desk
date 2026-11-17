@@ -9,6 +9,7 @@ from novoacesso.service_client import BrokerClient,input_packet
 RECT=dict(left=0,top=0,width=1920,height=1080)
 
 class Service:
+    installed=True
     def __init__(self):
         self.authorized=False;self.generation=1;self.captured=False;self.calls=[]
         self.rect=RECT.copy();self.virtual=RECT.copy();self.change_during_capture=False
@@ -76,6 +77,17 @@ def test_invalid_service_state_denies_input_without_falling_back_or_losing_video
     with pytest.raises(DesktopInputError) as error:value.input(dict(event='move',x=.5,y=.5))
     assert error.value.input_backend=='service' and error.value.input_reason=='service_unavailable'
     assert value.secure.authorized and not [c for c in value.secure.calls if c[0]=='input']
+
+def test_configured_service_recovers_after_slow_start_without_native_fallback():
+    value=backend();ready=[False]
+    def state():
+        if not ready[0]:raise OSError(5,'service still starting')
+        return value.secure.generation,value.secure.captured
+    value.secure.input_state=state
+    with pytest.raises(DesktopInputError):value.input(dict(event='move',x=.5,y=.5))
+    assert value.service_input_route and not [c for c in value.secure.calls if c[0]=='input']
+    ready[0]=True;value.input(dict(event='move',x=.5,y=.5))
+    assert len([c for c in value.secure.calls if c[0]=='input'])==1
 
 def test_monitor_switch_releases_held_service_input_before_repriming():
     value=backend();value.input(dict(event='button',button='left',down=True,x=.5,y=.5))

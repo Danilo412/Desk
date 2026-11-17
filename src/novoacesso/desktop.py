@@ -92,10 +92,10 @@ class DesktopBackend:
         self.secure.begin_session()
         # Choose once for the approved lease, avoiding a mid-drag/key route
         # change. The broker already supports Default as well as Winlogon.
-        self.service_input_route=self.secure.available()
-        if self.service_input_route:
-            try:self.secure.input_state()
-            except (OSError,ValueError):self.service_input_route=False
+        # A slow service start must not silently select the failing native
+        # path for the whole connection. Each actual input still needs a
+        # successful state probe and matching capture before it is injected.
+        self.service_input_route=self.secure.installed
         self.service_input_geometry=None
 
     def end_secure_session(self):

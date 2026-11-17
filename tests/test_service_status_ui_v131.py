@@ -33,7 +33,7 @@ def test_private_connection_profile_is_masked_without_changing_connect_payload()
 def test_service_probe_requires_existing_host_lease_and_distinguishes_registration_from_response(monkeypatch):
     from novoacesso import service_client
     monkeypatch.setattr(service_client,'installed_configuration',lambda:{'fixture':True})
-    calls=[];broker=SimpleNamespace(authorized=False,available=lambda:calls.append('probe') or True,last_error_code=None)
+    calls=[];broker=SimpleNamespace(authorized=False,available=lambda:calls.append('probe') or True,input_state=lambda:(1,True),last_error_code=None)
     window=MainWindow();window.backend=SimpleNamespace(secure=broker,service_input_route=False)
     try:
         window.refresh_service_registration();assert not calls

@@ -419,7 +419,11 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         # Probe only an already-authorized host lease. Opening this settings
         # page must never grant a lease or contact SYSTEM on its own.
         if configured and broker and broker.authorized:
-            if broker.available():
+            responded=broker.available()
+            if responded and getattr(backend,'service_input_route',False):
+                try:broker.input_state()
+                except (OSError,ValueError):responded=False
+            if responded:
                 text+=' O serviço respondeu.'
                 text+=' Controle pelo serviço ativo.' if getattr(backend,'service_input_route',False) else ' Reconecte para ativar o controle pelo serviço.'
             else:
