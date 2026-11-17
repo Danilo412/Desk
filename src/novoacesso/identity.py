@@ -33,6 +33,8 @@ class IdentityStore:
                 tls=key.private_bytes(serialization.Encoding.PEM,serialization.PrivateFormat.PKCS8,serialization.NoEncryption()).decode(),
                 cert=cert.public_bytes(serialization.Encoding.PEM).decode(),trusted={},settings={},route=secrets.token_urlsafe(32))
             self.save()
+        from .password_access import PasswordAccess
+        self.password_access=PasswordAccess(self)
     def save(self):
         with self.lock:
             raw=protect(json.dumps(self.data,ensure_ascii=False).encode())

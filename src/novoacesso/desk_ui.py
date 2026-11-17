@@ -363,6 +363,16 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         self.service_check_button=action_button('Verificar serviço de controle',lambda:self.refresh_service_registration(feedback=True))
         service_layout.addWidget(self.service_check_button,0,Qt.AlignmentFlag.AlignLeft)
         access.addWidget(service_box);self.refresh_service_registration()
+        password_box=QFrame();password_box.setObjectName('permissionsPanel');password_layout=QVBoxLayout(password_box)
+        password_layout.setContentsMargins(16,14,16,14);password_layout.setSpacing(8)
+        password_title=QLabel('Acessar pelo número e senha');password_title.setObjectName('sectionTitle');password_layout.addWidget(password_title)
+        self.password_access_status=hint('');self.password_access_status.setAccessibleName('Estado do acesso por senha');password_layout.addWidget(self.password_access_status)
+        self.password_access_enabled=QCheckBox('Permitir conexões pelo meu número e senha, sem novo aceite')
+        self.password_access_enabled.toggled.connect(self.password_access_changed);password_layout.addWidget(self.password_access_enabled)
+        password_layout.addWidget(action_button('Definir ou trocar senha de acesso…',self.configure_access_password),0,Qt.AlignmentFlag.AlignLeft)
+        password_layout.addWidget(action_button('Remover senha de acesso',self.remove_access_password),0,Qt.AlignmentFlag.AlignLeft)
+        password_layout.addWidget(hint('Use uma senha exclusiva para o Desk, com pelo menos 12 caracteres. Ela é diferente da senha do Windows. Não é salva no computador de quem conecta. Cinco tentativas erradas bloqueiam novas tentativas por cinco minutos. O computador deve ficar ligado, com o Desk aberto após seu login.'))
+        access.addWidget(password_box);self.refresh_password_access()
         self.unattended=QCheckBox('Habilitar acesso permanente por dispositivos autorizados');self.unattended.setChecked(settings.get('unattended',False));self.unattended.toggled.connect(self.unattended_changed);access.addWidget(self.unattended)
         self.autostart=QCheckBox('Iniciar com o Windows, após meu login');self.autostart.setChecked(settings.get('autostart',False));self.autostart.toggled.connect(self.autostart_changed);access.addWidget(self.autostart)
         access.addWidget(hint('A tela de senha exige instalar o serviço e aprovar o acesso como administrador na máquina que será acessada. O modo pessoal fica vinculado a esta versão exata; uma atualização exige nova aprovação. Ele só atende sessões já autorizadas com mouse e teclado. O Desk precisa permanecer aberto após seu login no Windows; esta etapa não oferece conexão antes do primeiro login nem dispensa a senha do Windows.'))
@@ -407,6 +417,44 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         self.settings_navigation.currentRowChanged.connect(self.settings_pages.setCurrentIndex);self.settings_navigation.setCurrentRow(0)
         self.settings_navigation.currentRowChanged.connect(lambda index:self.refresh_service_registration() if index==1 else None)
         self.settings_page=page;self.tabs.addTab(page,'Configurações');self.refresh_trusted()
+
+    def refresh_password_access(self):
+        info=self.identity.password_access.information()
+        self.password_access_enabled.blockSignals(True);self.password_access_enabled.setChecked(info['enabled']);self.password_access_enabled.blockSignals(False)
+        self.password_access_status.setText('Ativado. Quem souber seu número e senha poderá acessar com as permissões selecionadas.' if info['enabled'] else 'Senha definida, acesso por senha desativado.' if info['configured'] else 'Desativado. Defina uma senha para permitir este tipo de acesso.')
+        if getattr(self,'_desk_address_online',False) and not getattr(self,'peer',None):
+            self.address_caption.setText('Endereço fixo deste dispositivo · acesso por senha ativado' if info['enabled'] else 'Endereço fixo deste dispositivo · aprovação necessária')
+
+    def close_password_session(self):
+        peer=getattr(self,'peer',None)
+        if peer and peer.role=='host' and getattr(peer,'authentication','')=='password':peer.close('Acesso por senha alterado localmente.')
+
+    def configure_access_password(self):
+        password,ok=QInputDialog.getText(self,'Senha de acesso do Desk','Defina uma senha exclusiva para acessar este computador (12 a 128 caracteres):',QLineEdit.EchoMode.Password)
+        if not ok:return
+        confirmation,ok=QInputDialog.getText(self,'Confirmar senha de acesso','Digite novamente a senha de acesso do Desk:',QLineEdit.EchoMode.Password)
+        if not ok:return
+        if password!=confirmation:self.notice('As senhas não coincidem. Nenhuma alteração foi salva.');return
+        try:self.identity.password_access.set_password(password)
+        except ValueError as error:self.notice(str(error));return
+        finally:password=confirmation=None
+        self.close_password_session();self.refresh_password_access()
+        self.notice('Senha definida. Para permitir conexões sem aceite, marque a opção de acesso pelo número e senha nesta página.')
+
+    def password_access_changed(self,enabled):
+        if enabled:
+            if not self.identity.password_access.information()['configured']:
+                self.notice('Defina a senha de acesso primeiro.');self.refresh_password_access();return
+            text='Qualquer computador com seu número Desk e a senha de acesso poderá ver sua tela e usar as permissões selecionadas, sem um novo aceite. O acesso ficará disponível enquanto o Desk estiver aberto. Você poderá desativá-lo nesta página. Ativar neste computador?'
+            if QMessageBox.question(self,'Ativar acesso por senha?',text,QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:
+                self.refresh_password_access();return
+        self.identity.password_access.enable(enabled);self.close_password_session();self.refresh_password_access()
+        if enabled:self._desk_listening_requested=True;self.prepare_address()
+
+    def remove_access_password(self):
+        if not self.identity.password_access.information()['configured']:return
+        if QMessageBox.question(self,'Remover senha de acesso?','Desativar o acesso por senha e encerrar as sessões autenticadas por ela? Os dispositivos autorizados separadamente serão mantidos.',QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:return
+        self.identity.password_access.remove();self.close_password_session();self.refresh_password_access()
 
     def refresh_service_registration(self,feedback=False):
         # Read-only registration check. Does not start a privileged lease,
@@ -849,7 +897,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         if name=='numeric_ready' and self.numeric_invite and data.get('id')==self.numeric_invite.id:
             self._desk_address_online=True
             self.set_availability('online')
-            self.address_caption.setText('Endereço fixo deste dispositivo · aprovação necessária')
+            self.address_caption.setText('Endereço fixo deste dispositivo · acesso por senha ativado' if self.identity.password_access.information()['enabled'] else 'Endereço fixo deste dispositivo · aprovação necessária')
             self.activity.setText('Disponível. Compartilhe seu endereço para receber uma solicitação.');self.status.setText('Disponível')
             self.address_timer.start(max(1000,int((data.get('expires',time.time()+600)-time.time()-30)*1000)))
             if self._desk_copy_when_ready:self._desk_copy_when_ready=False;self.copy_invite()

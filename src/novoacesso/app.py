@@ -513,6 +513,13 @@ class MainWindow(DeskShell,QMainWindow):
             self.notifications.incoming(prompt.kind,prompt.data)
             if prompt.kind=="consent":
                 prompt.answer=self.consent_dialog(prompt)
+            elif prompt.kind=='access_password':
+                dialog=QInputDialog(self.fullscreen_window or self)
+                dialog.setWindowTitle('Acessar computador por senha');dialog.setLabelText('Senha de acesso do Desk no computador remoto:')
+                dialog.setTextEchoMode(QLineEdit.EchoMode.Password);dialog.setOkButtonText('Conectar');dialog.setCancelButtonText('Cancelar')
+                timer=QTimer(dialog);timer.setInterval(75);timer.timeout.connect(lambda:dialog.reject() if prompt.is_cancelled() or self.closing else None);timer.start()
+                allowed=dialog.exec()==QDialog.DialogCode.Accepted and not prompt.is_cancelled() and not self.closing
+                prompt.answer=dialog.textValue() if allowed else None;dialog.setTextValue('');dialog.deleteLater()
             elif prompt.kind=='advanced_action':prompt.answer=self.advanced_prompt(prompt)
             elif prompt.kind=="save_file":
                 name=prompt.data["name"];size=prompt.data["size"]
@@ -564,6 +571,8 @@ class MainWindow(DeskShell,QMainWindow):
     def stop_all_sharing(self):
         self._desk_listening_requested=False;self.address_timer.stop()
         self.stop_sharing()
+        if self.identity.password_access.information()['enabled']:
+            self.identity.password_access.enable(False);self.close_password_session();self.refresh_password_access()
         if self.unattended.isChecked():self.unattended.setChecked(False)
         self.status.setText('Recebimento pausado');self.address_caption.setText('Seu endereço fixo foi mantido · recebimento pausado')
 

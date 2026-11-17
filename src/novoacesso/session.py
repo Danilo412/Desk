@@ -36,6 +36,7 @@ class Peer:
         self.fast_input=FastInput(self);self.input_route_lock=threading.RLock();self.input_lock=threading.RLock()
         self.control_state='desktop';self.control_diagnostic={}
         self.receive_metrics={}
+        self.authorization_check=None
         self.video_queue=queue.Queue(maxsize=2)
         self.file_send_queue=queue.Queue(maxsize=32);self.file_sender_running=False
         from .input_dispatch import InputDispatcher
@@ -49,6 +50,7 @@ class Peer:
         if self.channel.closed.is_set():raise ConnectionError('A conexão foi encerrada antes de iniciar a sessão.')
         if self.role=='viewer':self.spawn(self._decode_video)
         self.spawn(self._receive);self.spawn(self._heartbeat)
+        if self.authorization_check:self.spawn(self._authorization_watch)
         if self.role=="host":
             if self.permissions.get('control') and callable(getattr(self.backend,'begin_secure_session',None)):self.backend.begin_secure_session()
             self.spawn(self._capture)
@@ -92,6 +94,7 @@ class Peer:
     def apply_input(self,msg):
         with self.input_lock:
             if self.closed.is_set() or self.role!='host' or not self.permissions.get('control',False):return
+            if self.authorization_check and not self.authorization_check():self.close('Acesso por senha revogado localmente.');return
             if self.control_state=='protected':return
             try:
                 self.backend.input(msg)
@@ -118,6 +121,12 @@ class Peer:
         if not self.permissions.get("audio") or not old.get("audio"):self.audio_capture_attempted=False
         if old.get('control') and not self.permissions.get('control'):self.features.revoke()
         self.send(dict(type="permissions",values=self.permissions))
+
+    def _authorization_watch(self):
+        while not self.closed.wait(.1):
+            try:allowed=self.authorization_check()
+            except Exception:allowed=False
+            if not allowed:self.close('Acesso por senha revogado localmente.');return
 
     def _heartbeat(self):
         if getattr(self.channel,'version',1)<2 and self.closed.wait(4):return
@@ -506,7 +515,7 @@ class HostService:
         try:return Channel(self.context.wrap_socket(raw,server_side=True)),address
         except BaseException:raw.close();raise
 
-    def establish(self,channel,monitors,device_public=None):
+    def establish(self,channel,monitors,device_public=None,authorization_check=None):
         if self.closed.is_set() or channel.closed.is_set():raise ConnectionAbortedError('A solicitação já foi encerrada.')
         if not self.gate.acquire(False):raise ProtocolError('Este computador já possui uma sessão ativa.')
         released=False;peer=None
@@ -519,6 +528,8 @@ class HostService:
             if channel.handshake_mode:channel.accept_handshake(welcome)
             else:channel.control(welcome)
             peer=self.peer=Peer(channel,'host',event,self.request,self.permissions,self.backend,monitors)
+            peer.authorization_check=authorization_check
+            peer.authentication='password' if authorization_check else 'approved'
             self.peer.device_public=device_public;self.peer.start()
         except BaseException:
             if peer:
@@ -539,6 +550,23 @@ class HostService:
                 secret=msg.get("secret")
                 if not isinstance(secret,str) or not secrets.compare_digest(secret,self.invitation["secret"]):raise ProtocolError("Convite não autorizado.")
                 if time.time()>=self.invitation["expires"]:raise ProtocolError("Convite expirado.")
+                password_access=getattr(self.identity,'password_access',None)
+                if password_access and password_access.information()['enabled'] and msg.get('password_supported')==1:
+                    # This channel has already completed the pinned encrypted
+                    # transport. No screen/input/session exists before verification.
+                    self.approval_channel=channel;channel.sock.settimeout(120)
+                    nonce=secrets.token_hex(32);channel.control(dict(type='password_required',nonce=nonce))
+                    auth_kind,answer=channel.receive()
+                    if auth_kind!=b'J' or answer.get('type')!='access_password' or answer.get('nonce')!=nonce:
+                        from .wire import AuthorizationError
+                        raise AuthorizationError('Autenticação por senha não concluída.')
+                    revision=password_access.verify(answer.get('password'));answer.clear()
+                    if self.closed.is_set() or not password_access.authorized(revision):raise ProtocolError('Acesso por senha revogado.')
+                    channel.sock.settimeout(15)
+                    self.establish(channel,self.backend.monitors(),None,authorization_check=lambda:password_access.authorized(revision))
+                    self.approval_channel=None;self.used=True
+                    if self.listener:self.listener.close()
+                    return
                 # The same I/O pump owns SSL during approval and during the
                 # session. It detects EOF without a second concurrent SSL reader.
                 self.approval_channel=channel;channel.start_io(handshake=True)
@@ -557,6 +585,10 @@ class HostService:
                 return
             except Exception as ex:
                 self.approval_channel=None
+                from .wire import AuthorizationError
+                if channel and isinstance(ex,AuthorizationError):
+                    try:channel.control(dict(type='denied',reason='password_not_authorized'))
+                    except Exception:pass
                 if channel:channel.close()
                 elif raw:raw.close()
                 failures+=1
@@ -590,9 +622,22 @@ def join(token,event,request,on_channel=None,identity=None,force_relay=False):
     channel,data=connect_invitation(token,force_relay=True) if force_relay else connect_invitation(token)
     try:
         if on_channel:on_channel(channel)
-        channel.control(dict(type="hello",min=1,max=2,secret=data["secret"],device_public=identity.public if identity else None))
+        channel.control(dict(type="hello",min=1,max=2,secret=data["secret"],device_public=identity.public if identity else None,password_supported=1))
         channel.sock.settimeout(75)
         kind,msg=channel.receive()
+        if kind==b'J' and msg.get('type')=='password_required':
+            nonce=msg.get('nonce')
+            if not isinstance(nonce,str) or len(nonce)!=64 or any(c not in '0123456789abcdef' for c in nonce):raise ProtocolError('Pedido de senha inválido.')
+            channel.sock.settimeout(120)
+            answer=request('access_password',{'_cancelled':lambda:channel.closed.is_set()},90)
+            if not isinstance(answer,str):raise ConnectionAbortedError('Conexão por senha cancelada.')
+            from .password_access import password_bytes
+            password_bytes(answer)
+            channel.control(dict(type='access_password',nonce=nonce,password=answer));answer=None
+            kind,msg=channel.receive()
+        if kind==b'J' and msg.get('type')=='denied':
+            from .wire import AuthorizationError
+            raise AuthorizationError('Senha incorreta, acesso desativado ou limite temporário de tentativas. Confira no computador remoto.')
         if kind!=b"J" or msg.get("type")!="welcome" or msg.get("version") not in (1,2):raise ProtocolError("A sessão não foi aceita.")
         channel.version=msg['version']
         permissions=msg.get("permissions");monitors=msg.get("monitors")
