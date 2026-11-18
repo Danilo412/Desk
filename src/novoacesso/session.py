@@ -217,7 +217,9 @@ class Peer:
                         last_stats=begin
                         outer=getattr(self.channel.sock,'outer',None)
                         with self.feedback_lock:pending_frames=len(self.sent_frames);pending_kib=sum(self.sent_frame_bytes.values())/1024
+                        capture_detail={k:v for k,v in getattr(self.backend,'last_capture_metrics',{}).items() if k in ('capture_probe_ms','capture_grab_ms','capture_scale_ms') and type(v) in (int,float) and 0<=v<1e8}
                         report=dict(**stats,frames=encoder.frames,seconds=begin-started,bytes=sent,**self.quality.snapshot(),capture_ms=round((encode_begin-capture_begin)*1000,2),input_apply_ms=round(self.input_apply_ms,2),pending_frames=pending_frames,pending_kib=round(pending_kib,1),input_fast=int(self.fast_input.active),control_route='service' if getattr(self.backend,'service_input_route',False) else 'windows',capture=getattr(source,'backend','MSS'),route=getattr(outer,'route_info','TLS direto' if outer is None else 'Relay TCP'))
+                        report.update(capture_detail)
                         self.event("stats",report)
                         self.channel.control(dict(type="stats",values=report))
                     self.closed.wait(max(0,1/(effective if modern else fps)-(time.monotonic()-begin)))

@@ -1,6 +1,6 @@
 [project]
 name = "desk-remoto"
-version = "0.14.1"
+version = "0.14.2"
 description = "Aplicativo próprio de suporte remoto consentido para Windows"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.12"

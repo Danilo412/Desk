@@ -105,6 +105,7 @@ def test_capture_separate_cursor_excludes_hardware_pointer(monkeypatch):
         def grab(self,rect):return SimpleNamespace(size=(32,32),bgra=b'\0\0\0\xff'*1024)
         def close(self):pass
     monkeypatch.setattr('novoacesso.capture.mss.MSS',lambda **kwargs:(options.append(kwargs) or Screen()))
+    monkeypatch.setenv('NOVOACESSO_CAPTURE','mss')
     with CaptureSource() as source:
         source.separate_cursor=True;assert source.image(1).size==(32,32)
         assert source.backend=='MSS' and source.camera is None

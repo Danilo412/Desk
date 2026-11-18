@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 import threading
+import time
 from contextlib import contextmanager
 from PIL import Image
 import mss
@@ -137,9 +138,14 @@ class DesktopBackend:
         return self._cursor_shapes.get(info.hCursor,'arrow') if self.user.GetCursorInfo(ctypes.byref(info)) and info.flags&1 else 'arrow'
 
     def capture(self,source,index,width):
+        probe_begin=time.monotonic()
         secure=getattr(self,'secure',None)
-        if secure and secure.authorized and self.local_desktop_state()=='protected':
+        protected=bool(secure and secure.authorized and self.local_desktop_state()=='protected')
+        self.last_capture_metrics=dict(capture_probe_ms=round((time.monotonic()-probe_begin)*1000,2))
+        if protected:
+            grab_begin=time.monotonic()
             image,rect,virtual=secure.capture(index,width)
+            self.last_capture_metrics.update(capture_grab_ms=round((time.monotonic()-grab_begin)*1000,2),capture_scale_ms=0.)
             with self.lock:
                 self.rect=rect;self.virtual_rect=virtual;self.capture_monitor=index;self.capture_width=width
                 self.service_input_geometry=None
@@ -153,12 +159,15 @@ class DesktopBackend:
         rect=monitors[index]
         with self.lock:
             self.rect=dict(rect);self.virtual_rect=dict(monitors[0]);self.capture_monitor=index;self.capture_width=width
+        grab_begin=time.monotonic()
         if hasattr(source,'image'):image=source.image(index)
         else:
             shot=source.grab(rect);image=Image.frombytes("RGB",shot.size,shot.bgra,'raw','BGRX')
+        scale_begin=time.monotonic()
         max_height=1440 if width>1920 else 1080 if width>=1920 else 720 if width>=1280 else 1080
         ratio=min(1,width/image.width,max_height/image.height)
         if ratio<1:image=image.resize((max(1,int(image.width*ratio)),max(1,int(image.height*ratio))),Image.Resampling.LANCZOS)
+        self.last_capture_metrics.update(capture_grab_ms=round((scale_begin-grab_begin)*1000,2),capture_scale_ms=round((time.monotonic()-scale_begin)*1000,2))
         return image
 
     def input(self,data):

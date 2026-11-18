@@ -11,6 +11,6 @@ pure=json.loads(p.stdout);assert pure['passed'] and pure['privileged_actions'] i
 # this branch; it checks Authenticode before returning an authorization.
 refusal=subprocess.run([str(binary),'--preflight',str(binary)],capture_output=True,text=True,timeout=30)
 assert refusal.returncode==20,'Unsigned native component unexpectedly authorized'
-publish=root/'dist/publish';publish.mkdir(parents=True,exist_ok=True);shutil.copy2(binary,publish/'DeskHost-0.14.1-Unsigned.exe')
+publish=root/'dist/publish';publish.mkdir(parents=True,exist_ok=True);shutil.copy2(binary,publish/'DeskHost-0.14.2-Unsigned.exe')
 report=dict(passed=True,framing=pure,unsigned_preflight_refused=True,service_installed=False,privileged_actions=False,sha256=hashlib.sha256(binary.read_bytes()).hexdigest())
 (publish/'service-validation.json').write_text(json.dumps(report,indent=2),encoding='utf-8');print(json.dumps(report))

@@ -12,7 +12,10 @@ class CaptureSource:
         monitors=self.monitors;rect=monitors[index];self.unchanged=False
         # A captura acelerada só é usada quando a seleção é inequívoca.
         # Sistemas com múltiplas telas continuam usando o monitor exato do MSS.
-        if os.name=='nt' and not self.separate_cursor and len(monitors)==2 and index in (0,1) and not self.dxgi_failed and os.environ.get('NOVOACESSO_CAPTURE','auto')!='mss':
+        # DXcam's DXGI path copies the desktop surface without composing the
+        # hardware pointer. A separate viewer cursor does not require falling
+        # back to slow GDI capture; MSS also uses with_cursor=False below.
+        if os.name=='nt' and len(monitors)==2 and index in (0,1) and not self.dxgi_failed and os.environ.get('NOVOACESSO_CAPTURE','auto')!='mss':
             try:
                 if self.camera is None:
                     import comtypes

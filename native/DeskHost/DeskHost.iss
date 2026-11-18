@@ -8,8 +8,8 @@
 [Setup]
 AppId={{B6439583-F688-498A-A469-75DA14DBD88B}
 AppName=Desk - Serviço de tela de bloqueio
-AppVersion=0.14.1
-VersionInfoVersion=0.14.1.0
+AppVersion=0.14.2
+VersionInfoVersion=0.14.2.0
 AppPublisher=Desk
 DefaultDirName={autopf}\DeskHost
 DisableDirPage=yes
@@ -18,8 +18,8 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
-OutputDir=..\..\..\Desk-Servico-0.14.1-Preparacao
-OutputBaseFilename=Desk-Service-0.14.1-Setup
+OutputDir=..\..\..\Desk-Servico-0.14.2-Preparacao
+OutputBaseFilename=Desk-Service-0.14.2-Setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
