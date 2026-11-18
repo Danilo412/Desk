@@ -29,9 +29,14 @@ O aplicativo comum permanece sem elevação. O serviço opcional, aprovado por
 administrador e vinculado ao Desk.exe exato, fornece captura e entrada nas
 telas protegidas durante sessões autorizadas. Não é necessário executar
 toda a interface como administrador a cada abertura.
-Para atualizar o serviço, remova apenas “Desk - Serviço de tela de bloqueio”
-antigo, instale o aplicativo novo e depois Desk-Service-0.14.2-Setup.exe.
-Selecione o Desk.exe novo e aprove a versão exata para teste pessoal.
+Esta atualização 0.14.2 distribui somente o aplicativo. O novo componente
+do serviço opcional foi bloqueado neste PC pelo Windows com erro 4551;
+o instalador Desk-Service-0.14.2-Setup.exe não é distribuído nesta versão.
+Um serviço anterior vinculado ao hash exato do Desk.exe deixa de reconhecer
+o aplicativo atualizado. Portanto, o acesso à tela bloqueada e às janelas
+protegidas por esse serviço fica pendente. Não remova o serviço existente
+nem altere as proteções para tentar contornar o bloqueio. O controle comum
+na área de trabalho aberta continua sujeito às permissões normais do Windows.
 O Windows continuará exigindo as aprovações pertinentes. Não são criadas
 exceções de antivírus, certificados raiz ou desvios das proteções do sistema.
 
@@ -44,7 +49,7 @@ Atualize as duas pontas para aproveitar a codificação otimizada e a fila de en
 Os testes de imagem foram feitos com dados sintéticos, não comprovam o FPS desta máquina.
 A janela Informações da sessão passa a mostrar captura, codificação, fila de quadros e tempo de aplicação do controle.
 Não altera senhas, número fixo, permissões do Windows nem ativa o serviço automaticamente.
-A atualização do aplicativo exige renovar o vínculo do serviço de versão exata se ele estiver instalado.
+A renovação do vínculo do serviço de versão exata fica pendente da liberação do novo componente.
 Os arquivos novos continuam sem assinatura Authenticode e podem ser bloqueados pelo Windows.
 
 CAPTURA COM CONTROLE (0.14.2)

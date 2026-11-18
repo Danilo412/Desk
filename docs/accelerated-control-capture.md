@@ -31,3 +31,17 @@ References: the installed, pinned DXcam 0.3.0 DXGI implementation and
 No real capture is executed from shell or tests. GPU and MSS regression
 tests use synthetic arrays and stub providers. End-to-end improvement still
 requires measuring the updated host during a real authorized session.
+
+## Published application scope
+
+The 0.14.2 application passed 334 source tests and the compiled GUI's synthetic
+package tests. Its freshly built optional DeskHost.exe was blocked locally
+with Windows error 4551 before its self-test could start. It is excluded from
+the release; no service installer or substituted/repacked service is offered.
+The normal GUI update does not replace or reconfigure the installed service.
+A previous fixed-hash service binding does not recognize the new GUI, so
+protected desktop input/capture through that binding is unavailable pending
+normal Windows validation and a matching owner-approved service installation.
+The update manifest, release notes and included guide disclose this limitation.
+The 0.14.1 owner manually confirmed correct mouse clicks and keyboard typing,
+with delayed visual feedback. This does not validate the 0.14.2 live capture.
