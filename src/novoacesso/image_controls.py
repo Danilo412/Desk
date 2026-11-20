@@ -99,19 +99,3 @@ class ImageControls:
 
     def minimize_remote_session(self):
         self.exit_fullscreen();self.showMinimized()
-
-STYLE='''
-QRadioButton{spacing:8px;padding:3px 0;font-weight:600;}
-QRadioButton:checked{color:#f17b70;}
-QRadioButton::indicator{width:16px;height:16px;}
-QRadioButton::indicator:unchecked{background:#232121;border:1px solid #858080;border-radius:8px;}
-QRadioButton::indicator:checked{background:qradialgradient(cx:.5,cy:.5,radius:.5,stop:0 white,stop:.35 white,stop:.4 #ef443b,stop:1 #ef443b);border:1px solid #ef443b;border-radius:8px;}
-QLabel#imageHint{font-size:12px;color:#aaa;background:transparent;}
-QLabel#imageSection{font-size:17px;font-weight:400;color:#ddd;border-bottom:1px solid #515151;padding:10px 0 7px;background:transparent;}
-QWidget#segmentedGroup{background:transparent;}
-QPushButton#segment{border-radius:0;background:#303030;border:1px solid #555;padding:8px 5px;min-height:23px;font-weight:600;}
-QPushButton#segment:hover{background:#454545;border-color:#888;}
-QPushButton#segment:checked{background:#ef443b;border-color:#ef443b;color:white;}
-QPushButton#segment:pressed{background:#b9312c;color:white;}
-QPushButton#segment:focus{border-color:#ffc0b9;}
-'''

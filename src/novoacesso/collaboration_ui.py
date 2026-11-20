@@ -14,7 +14,6 @@ class FileDropArea(QFrame):
         super().__init__();self.setAcceptDrops(True);self.setObjectName('fileDropArea')
         col=QVBoxLayout(self);label=QLabel('Arraste arquivos ou pastas aqui\nou escolha o que deseja enviar.');label.setWordWrap(True);label.setAlignment(Qt.AlignmentFlag.AlignCenter);col.addWidget(label)
         self.setAccessibleName('Soltar arquivos ou pastas para enviar');self.setMinimumHeight(76)
-        self.setStyleSheet('QFrame#fileDropArea{border:1px dashed #777;border-radius:5px;background:#282828;} QFrame#fileDropArea QLabel{border:0;background:transparent;color:#bbb;}')
     def dragEnterEvent(self,event):
         if self.isEnabled() and local_file_paths(event.mimeData()):event.acceptProposedAction()
         else:event.ignore()

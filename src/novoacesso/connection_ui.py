@@ -190,20 +190,3 @@ class ConnectionFlow:
         elif name=='disconnected':
             self.canvas.image=None;self.canvas.allow_control=False;self.canvas.update()
             self.show_connection_state('reconnecting' if self.retry_timer.isActive() else 'ended',data.get('text',''))
-
-
-STYLE='''
-QWidget#connectionOverlay {background:#151515;}
-QFrame#connectionCard {background:#242424;border:1px solid #454545;border-radius:5px;}
-QFrame#connectionCard QLabel {background:transparent;}
-QLabel#connectionDevice {font-size:15px;color:#ec756b;}
-QLabel#connectionHeading {font-size:24px;font-weight:600;}
-QProgressBar {background:#353535;border:0;border-radius:2px;}
-QProgressBar::chunk {background:#ec6359;}
-QLabel#sessionDevice {font-weight:600;}
-QLabel#sessionBadge {background:#39312f;color:#d9b6ae;border-radius:3px;padding:3px 9px;}
-QLabel#sessionBadge[connected="true"] {background:#284334;color:#a1d5ae;}
-QFrame#fullscreenBar {background:#262626;border:1px solid #555;border-bottom-left-radius:5px;border-bottom-right-radius:5px;}
-QFrame#fullscreenBar QLabel {background:transparent;}
-QFrame#fullscreenBar QPushButton {padding:6px 10px;}
-'''

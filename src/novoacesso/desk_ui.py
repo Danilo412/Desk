@@ -3,18 +3,19 @@ from __future__ import annotations
 import os,time,socket,math
 from pathlib import Path
 from PySide6.QtCore import Qt,QTimer,QSize,QRectF,QEvent,QPointF,Signal,QUrl
-from PySide6.QtGui import QIcon,QAction,QKeySequence,QShortcut,QPainter,QColor,QPen,QPolygonF,QLinearGradient,QDesktopServices
+from PySide6.QtGui import QIcon,QAction,QKeySequence,QShortcut,QPainter,QColor,QPen,QPolygonF,QDesktopServices
 from PySide6.QtWidgets import (QWidget,QFrame,QLabel,QPushButton,QToolButton,QLineEdit,
     QPlainTextEdit,QCheckBox,QComboBox,QVBoxLayout,QHBoxLayout,QGridLayout,QTabWidget,
     QMenu,QApplication,QScrollArea,QListWidget,QListWidgetItem,QListView,QAbstractItemView,
-    QStyle,QDialog,QDialogButtonBox,QStyledItemDelegate,QSplitter,QStackedWidget,QWidgetAction,QInputDialog,QMessageBox)
+    QStyle,QDialog,QDialogButtonBox,QStyledItemDelegate,QSplitter,QStackedWidget,QWidgetAction,QInputDialog,QMessageBox,QSizePolicy)
 from .device_address import format_address,normalize_address
 from .wire import ProtocolError
-from .connection_ui import ConnectionFlow,STYLE as CONNECTION_STYLE
+from .connection_ui import ConnectionFlow
 from .session_tools import SessionTools
 from .collaboration_ui import CollaborationTools,SessionChat,TransferPanel,FileDropArea
-from .image_controls import ImageControls,STYLE as IMAGE_STYLE
+from .image_controls import ImageControls
 from .advanced_ui import AdvancedTools
+from .desk_theme import STYLE, COLORS, CONTAINER_RADIUS
 
 ASSETS=Path(__file__).resolve().parents[2]/'assets'
 
@@ -68,13 +69,13 @@ class TileGrid(QWidget):
     def __init__(self,parent=None):
         super().__init__(parent)
         self.grid=QGridLayout(self);self.grid.setContentsMargins(0,0,0,0)
-        self.grid.setSpacing(10);self.tiles=[];self.columns=0
+        self.grid.setSpacing(12);self.tiles=[];self.columns=0
 
     def add_tile(self,tile):
         self.tiles.append(tile);self.reflow()
 
     def reflow(self):
-        columns=4 if self.width()>=1100 else 2
+        columns=4 if self.width()>=1040 else 2
         if columns==self.columns and self.grid.count()==len(self.tiles):return
         while self.grid.count():self.grid.takeAt(0)
         self.columns=columns
@@ -86,17 +87,17 @@ class TileGrid(QWidget):
 
 class QuickActionCard(QPushButton):
     """A whole-card native button: one click target and one keyboard action."""
-    def __init__(self,title,description,action,handler,color):
+    def __init__(self,title,description,action,handler):
         super().__init__();self.setObjectName('featureTile');self.clicked.connect(handler)
         self.setAccessibleName(title+' · '+action);self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setStyleSheet('QPushButton#featureTile {background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 '+color+',stop:1 #29282c);}')
-        col=QVBoxLayout(self);col.setContentsMargins(17,16,17,13);col.setSpacing(9)
+        col=QVBoxLayout(self);col.setContentsMargins(16,16,16,16);col.setSpacing(8)
         for text,name in [(title,'tileTitle'),(description,'tileDescription')]:
             label=QLabel(text);label.setWordWrap(True);label.setObjectName(name)
             label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents);col.addWidget(label)
         col.addStretch();label=QLabel(action+'  →');label.setObjectName('tileAction')
-        label.setAlignment(Qt.AlignmentFlag.AlignRight);label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents);col.addWidget(label)
-        self.setMinimumHeight(156)
+        label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents);col.addWidget(label)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self.setMinimumHeight(136)
 
 class DeviceCardDelegate(QStyledItemDelegate):
     """Draw original device cards; never imply an unverified online state."""
@@ -107,35 +108,36 @@ class DeviceCardDelegate(QStyledItemDelegate):
         rect=QRectF(option.rect).adjusted(3,3,-5,-5)
         selected=bool(option.state & QStyle.StateFlag.State_Selected)
         data=index.data(Qt.ItemDataRole.UserRole)
-        color=QColor(data.get('color','#35485b') if isinstance(data,dict) else '#303a45')
-        gradient=QLinearGradient(rect.topLeft(),rect.bottomRight())
-        gradient.setColorAt(0,color.lighter(135));gradient.setColorAt(.6,color);gradient.setColorAt(1,QColor('#1d252e'))
-        painter.setBrush(gradient);painter.setPen(QPen(QColor('#ef6b61' if selected else '#5b6875'),1))
-        painter.drawRoundedRect(rect,3,3)
+        hovered=bool(option.state & QStyle.StateFlag.State_MouseOver)
+        fill='accent_muted' if selected else 'hover' if hovered else 'surface'
+        painter.setBrush(QColor(COLORS[fill]))
+        painter.setPen(QPen(QColor(COLORS['accent' if selected else 'line']),1))
+        painter.drawRoundedRect(rect,CONTAINER_RADIUS,CONTAINER_RADIUS)
         empty=not isinstance(data,dict)
         display=str(index.data(Qt.ItemDataRole.DisplayRole) or '').split('\n')
         title=display[0];subtitle=' · '.join(display[1:])
-        painter.setPen(QPen(QColor('#b4c2cd' if empty else '#e5edf3'),2))
+        marker=QColor(data.get('color','') if not empty else '')
+        if not marker.isValid():marker=QColor(COLORS['muted' if empty else 'info'])
+        painter.setPen(QPen(marker.lighter(165),2))
         monitor=QRectF(rect.left()+16,rect.top()+17,34,22)
         painter.setBrush(Qt.BrushStyle.NoBrush);painter.drawRoundedRect(monitor,2,2)
         x=monitor.center().x();y=monitor.bottom()
         painter.drawLine(int(x),int(y),int(x),int(y+7));painter.drawLine(int(x-10),int(y+7),int(x+10),int(y+7))
         if not empty and (data.get('id') or data.get('favorite_id') or data.get('fixed')):
             filled=bool(data.get('id') or data.get('favorite_id'))
-            painter.setPen(QPen(QColor('#efc871' if filled else '#cbd3da'),1.2));painter.setBrush(QColor('#efc871') if filled else Qt.BrushStyle.NoBrush)
+            favorite_color=QColor(COLORS['warning' if filled else 'muted'])
+            painter.setPen(QPen(favorite_color,1.2));painter.setBrush(favorite_color if filled else Qt.BrushStyle.NoBrush)
             cx=rect.right()-22;cy=rect.top()+22
             star=QPolygonF([QPointF(cx+math.cos(-math.pi/2+i*math.pi/5)*(8 if i%2==0 else 3.5),cy+math.sin(-math.pi/2+i*math.pi/5)*(8 if i%2==0 else 3.5)) for i in range(10)])
             painter.drawPolygon(star);painter.setBrush(Qt.BrushStyle.NoBrush)
-        band=QLinearGradient(0,rect.top()+57,0,rect.bottom());band.setColorAt(0,QColor(15,20,26,0));band.setColorAt(1,QColor(15,20,26,220))
-        painter.setPen(Qt.PenStyle.NoPen);painter.setBrush(band);painter.drawRect(rect.adjusted(1,57,-1,-1))
         font=option.font;font.setPointSize(11);font.setBold(True);painter.setFont(font)
-        painter.setPen(QColor('#e9eef2' if not empty else '#a9b6c1'))
+        painter.setPen(QColor(COLORS['muted' if empty else 'text']))
         painter.drawText(QRectF(rect.left()+15,rect.top()+64,rect.width()-30,25),Qt.AlignmentFlag.AlignLeft,
                          painter.fontMetrics().elidedText(title,Qt.TextElideMode.ElideRight,int(rect.width()-30)))
-        font.setPointSize(9);font.setBold(False);painter.setFont(font);painter.setPen(QColor('#b6c1ca'))
+        font.setPointSize(9);font.setBold(False);painter.setFont(font);painter.setPen(QColor(COLORS['muted']))
         painter.drawText(QRectF(rect.left()+15,rect.top()+94,rect.width()-30,40),Qt.TextFlag.TextWordWrap,subtitle)
         if option.state & QStyle.StateFlag.State_HasFocus:
-            painter.setPen(QPen(QColor('#ed6960'),1,Qt.PenStyle.DotLine));painter.drawRoundedRect(rect.adjusted(3,3,-3,-3),2,2)
+            painter.setPen(QPen(QColor(COLORS['focus']),2));painter.drawRoundedRect(rect.adjusted(3,3,-3,-3),8,8)
         painter.restore()
 
     def editorEvent(self,event,model,option,index):
@@ -160,11 +162,11 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         self.setWindowTitle('Desk');self.resize(1280,840);self.setMinimumSize(980,680)
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint,True)
         self.setWindowIcon(QIcon(str(ASSETS/'desk.ico')))
-        body=QWidget();self.setCentralWidget(body);outer=QVBoxLayout(body)
+        body=QWidget();body.setObjectName('deskWorkspace');self.setCentralWidget(body);outer=QVBoxLayout(body)
         outer.setContentsMargins(0,0,0,0);outer.setSpacing(0)
         from .window_chrome import DeskTitleStrip
         header=DeskTitleStrip(self);row=QHBoxLayout(header)
-        row.setContentsMargins(12,3,12,3);row.setSpacing(8)
+        row.setContentsMargins(16,6,12,6);row.setSpacing(8)
         mark=QLabel();mark.setPixmap(QIcon(str(ASSETS/'desk.ico')).pixmap(20,20));row.addWidget(mark)
         brand=QLabel('Desk');brand.setObjectName('brand');row.addWidget(brand)
         self.home_nav=action_button('Nova conexão',lambda:self.tabs.setCurrentIndex(0));self.home_nav.setIcon(QIcon(str(ASSETS/'monitor.svg')));self.home_nav.setObjectName('navTab');row.addWidget(self.home_nav)
@@ -178,7 +180,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         header.add_window_controls(row)
         outer.addWidget(header)
         bar=QFrame();bar.setObjectName('addressBar');line=QHBoxLayout(bar)
-        line.setContentsMargins(12,4,12,4);line.setSpacing(8)
+        line.setContentsMargins(16,8,16,8);line.setSpacing(8)
         self.availability_dot=QLabel('●');self.availability_dot.setObjectName('onlineDot');line.addWidget(self.availability_dot)
         self.remote_invite=AddressField();self.remote_invite.setObjectName('remoteAddress')
         self.remote_invite.setPlaceholderText('Digite o endereço remoto');self.remote_invite.setMaxLength(20000)
@@ -224,7 +226,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
     def build_session_page(self):
         from .app import RemoteCanvas
         from .quality import PROFILES
-        page=QWidget();layout=QVBoxLayout(page);layout.setContentsMargins(12,10,12,8);layout.setSpacing(8)
+        page=QWidget();layout=QVBoxLayout(page);layout.setContentsMargins(16,12,16,12);layout.setSpacing(8)
         toolbar=QFrame();toolbar.setObjectName('sessionToolbar');row=QHBoxLayout(toolbar)
         row.setContentsMargins(10,6,10,6);row.setSpacing(8)
         self.monitor=QComboBox(toolbar);self.monitor.setPlaceholderText('Monitor remoto');self.monitor.setAccessibleName('Selecionar monitor remoto');self.monitor.hide()
@@ -328,14 +330,16 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
 
     def build_settings_page(self,settings,saved_config,cloud_key):
         page=QWidget();layout=QHBoxLayout(page);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
-        self.settings_navigation=QListWidget();self.settings_navigation.setObjectName('settingsNavigation');self.settings_navigation.setFixedWidth(220)
+        self.settings_navigation=QListWidget();self.settings_navigation.setObjectName('settingsNavigation');self.settings_navigation.setFixedWidth(248)
+        self.settings_navigation.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.settings_navigation.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.settings_navigation.setAccessibleName('Categorias de configurações')
         self.settings_navigation.addItems(['Conexão','Acesso sem supervisão','Dispositivos autorizados'])
         sidebar=QWidget();sidebar.setObjectName('settingsSidebar');side=QVBoxLayout(sidebar);side.setContentsMargins(0,18,0,0);side.setSpacing(10)
         title=QLabel('Configurações');title.setObjectName('settingsTitle');side.addWidget(title)
         side.addWidget(self.settings_navigation,1);layout.addWidget(sidebar);self.settings_pages=QStackedWidget();layout.addWidget(self.settings_pages,1)
         def section(title,description):
-            body=QWidget();col=QVBoxLayout(body);col.setContentsMargins(28,24,28,24);col.setSpacing(14)
+            body=QWidget();body.setObjectName('scrollContent');col=QVBoxLayout(body);col.setContentsMargins(28,24,28,24);col.setSpacing(14)
             heading=QLabel(title);heading.setObjectName('settingsHeading');col.addWidget(heading);col.addWidget(hint(description))
             scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setWidget(body);self.settings_pages.addWidget(scroll);return col
         connection=section('Conexão','O Desk prepara a conexão pela internet ao abrir. Mantenha a mesma configuração nos computadores que você usa.')
@@ -502,7 +506,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         self.tabs.setCurrentIndex(0);self.home_sections.setCurrentIndex(index)
 
     def set_availability(self,state):
-        colors={'online':'#64c675','active':'#64c675','preparing':'#d6aa5b','offline':'#919191'}
+        colors={'online':COLORS['success'],'active':COLORS['success'],'preparing':COLORS['warning'],'offline':COLORS['muted']}
         labels={'online':'Disponível para receber solicitações','active':'Sessão ativa',
                 'preparing':'Conectando ao serviço de internet','offline':'Recebimento indisponível'}
         self.availability_dot.setStyleSheet('color:'+colors[state]+';background:transparent;')
@@ -519,12 +523,13 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         self.remote_invite.setText(QApplication.clipboard().text().strip());self.remote_invite.setFocus()
 
     def build_home(self):
-        page=QWidget();outer=QVBoxLayout(page);outer.setContentsMargins(28,4,28,12);outer.setSpacing(8)
-        hero=QFrame();hero.setObjectName('identityHero');hero_layout=QVBoxLayout(hero);hero_layout.setContentsMargins(0,20,0,18)
-        line=QHBoxLayout();line.addStretch();label=QLabel('Este dispositivo');label.setObjectName('deviceLabel');line.addWidget(label)
+        page=QWidget();outer=QVBoxLayout(page);outer.setContentsMargins(24,20,24,16);outer.setSpacing(12)
+        hero=QFrame();hero.setObjectName('identityHero');hero_layout=QVBoxLayout(hero);hero_layout.setContentsMargins(20,16,20,16)
+        label=QLabel('Este dispositivo');label.setObjectName('deviceLabel');hero_layout.addWidget(label)
+        line=QHBoxLayout();line.setSpacing(8)
         self.numeric_code=CopyAddressField();self.numeric_code.setObjectName('localAddress');self.numeric_code.copyRequested.connect(self.copy_invite)
-        self.numeric_code.setFrame(False);self.numeric_code.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.numeric_code.setMinimumWidth(390);self.numeric_code.setMaximumWidth(490)
+        self.numeric_code.setFrame(False);self.numeric_code.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.numeric_code.setMinimumWidth(320);self.numeric_code.setMaximumWidth(360)
         self.numeric_code.setPlaceholderText('Preparando endereço…');self.numeric_code.setAccessibleName('Seu endereço Desk')
         self.show_fixed_address()
         line.addWidget(self.numeric_code)
@@ -534,9 +539,9 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         invite=QToolButton();invite.setText('Convidar');invite.setObjectName('outlineAccent');invite.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         m=QMenu(invite);m.addAction('Copiar endereço',self.copy_invite);m.addAction('Copiar convite completo',self.copy_full_invitation)
         m.addSeparator();m.addAction('Atualizar disponibilidade',self.renew_address);m.addAction('Parar recebimento',self.stop_all_sharing)
-        invite.setMenu(m);line.addWidget(invite);line.addStretch();hero_layout.addLayout(line)
-        self.address_caption=hint('Seu endereço fixo. A conexão só começa depois do seu aceite.')
-        self.address_caption.setAlignment(Qt.AlignmentFlag.AlignCenter);hero_layout.addWidget(self.address_caption);outer.addWidget(hero)
+        line.addStretch();invite.setMenu(m);line.addWidget(invite);hero_layout.addLayout(line)
+        self.address_caption=hint('Compartilhe este número para receber uma solicitação de conexão.')
+        hero_layout.addWidget(self.address_caption);outer.addWidget(hero)
         self.incoming_notice=QFrame();self.incoming_notice.setObjectName('incomingNotice');notice_row=QHBoxLayout(self.incoming_notice);notice_row.setContentsMargins(12,8,8,8)
         self.incoming_notice_text=QLabel();self.incoming_notice_text.setTextFormat(Qt.TextFormat.PlainText);self.incoming_notice_text.setWordWrap(True);notice_row.addWidget(self.incoming_notice_text,1)
         dismiss=QToolButton();dismiss.setText('×');dismiss.setAccessibleName('Fechar aviso de solicitação encerrada');dismiss.clicked.connect(self.incoming_notice.hide);notice_row.addWidget(dismiss)
@@ -557,15 +562,15 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
             b.setAccessibleName(b.toolTip());b.clicked.connect(lambda checked=False,v=value:self.set_device_view(v))
             self.view_buttons.append((b,value));tools.addWidget(b)
         self.home_sections.setCornerWidget(self.device_tools,Qt.Corner.TopRightCorner)
-        start=QWidget();start_layout=QVBoxLayout(start);start_layout.setContentsMargins(0,14,0,0);start_layout.setSpacing(12)
+        start=QWidget();start.setObjectName('scrollContent');start_layout=QVBoxLayout(start);start_layout.setContentsMargins(0,14,8,0);start_layout.setSpacing(12)
         heading=QLabel('Acesso rápido');heading.setObjectName('sectionTitle');start_layout.addWidget(heading)
         grid=TileGrid();self.quick_tiles=grid
-        tiles=[('Seu Desk','Compartilhe seu endereço para receber uma solicitação de acesso.','Copiar endereço',self.copy_invite,'#bc4641'),
-            ('Acesso sem supervisão','Configure os dispositivos autorizados a voltar a este computador.','Configurar acesso',lambda:self.tabs.setCurrentIndex(2),'#396ba0'),
-            ('Favoritos','Guarde seus computadores e encontre seus acessos rapidamente.','Abrir favoritos',lambda:self.open_device_section(1),'#397966'),
-            ('Gravar tela','Grave sua tela ou a sessão em MP4, com áudio opcional.','Abrir gravações',self.open_recordings,'#795b9e')]
-        for title,description,action,handler,color in tiles:
-            grid.add_tile(QuickActionCard(title,description,action,handler,color))
+        tiles=[('Seu Desk','Compartilhe seu endereço para receber acesso.','Copiar endereço',self.copy_invite),
+            ('Acesso sem supervisão','Gerencie quem pode voltar sem novo aceite.','Configurar acesso',lambda:self.tabs.setCurrentIndex(2)),
+            ('Favoritos','Encontre seus computadores salvos.','Abrir favoritos',lambda:self.open_device_section(1)),
+            ('Gravar tela','Grave em MP4 com áudio opcional.','Abrir gravações',self.open_recordings)]
+        for title,description,action,handler in tiles:
+            grid.add_tile(QuickActionCard(title,description,action,handler))
         start_layout.addWidget(grid)
         self.permission_panel=QFrame();self.permission_panel.setObjectName('permissionsPanel');p=QVBoxLayout(self.permission_panel)
         p.setContentsMargins(16,12,16,12);title=QLabel('Permissões para conexões recebidas');title.setObjectName('sectionTitle');p.addWidget(title)
@@ -830,7 +835,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         col=QVBoxLayout(dialog);col.setContentsMargins(0,0,0,0);col.setSpacing(0)
         header=QFrame();header.setObjectName('acceptHeader');head=QHBoxLayout(header);head.setContentsMargins(22,15,22,15)
         logo=QLabel();logo.setPixmap(self.windowIcon().pixmap(24,24));head.addWidget(logo)
-        title=QLabel('Solicitação de conexão');title.setObjectName('sectionTitle');head.addWidget(title);head.addStretch();head.addWidget(hint('Desk'));col.addWidget(header)
+        title=QLabel('Solicitação de conexão');title.setObjectName('sectionTitle');head.addWidget(title);head.addStretch();col.addWidget(header)
         body=QHBoxLayout();body.setContentsMargins(22,22,22,20);body.setSpacing(24)
         identity=QFrame();identity.setObjectName('connectorCard');identity.setFixedWidth(238);left=QVBoxLayout(identity);left.setContentsMargins(20,22,20,22);left.setSpacing(12)
         avatar=QLabel();avatar.setPixmap(QIcon(str(ASSETS/'monitor.svg')).pixmap(54,54));left.addWidget(avatar)
@@ -857,7 +862,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         remember=QCheckBox('Permitir reconexões deste computador sem novo aceite')
         remember.setObjectName('rememberDevice');remember.setEnabled(bool(prompt.data.get('device_public')));remember.setChecked(bool(prompt.data.get('device_public')))
         remember.setToolTip('Ao aceitar, este dispositivo será autorizado por sua chave. Você pode revogar em Configurações > Conexão. O Desk precisa permanecer aberto.')
-        right.addWidget(remember);right.addWidget(hint('A conexão será salva na outra ponta. Revogue o acesso quando quiser.'))
+        right.addWidget(remember);right.addWidget(hint('O acesso salvo pode ser revogado nas configurações.'))
         dialog.remember_device=remember
         right.addStretch();body.addLayout(right,1);col.addLayout(body)
         footer=QFrame();footer.setObjectName('acceptFooter');bottom=QHBoxLayout(footer);bottom.setContentsMargins(22,14,22,14)
@@ -965,106 +970,3 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
             for attribute,value in [(20,1),(35,0x202020),(36,0xF0F0F0)]:
                 data=ctypes.c_int(value);dwm(ctypes.c_void_p(hwnd),attribute,ctypes.byref(data),ctypes.sizeof(data))
         except (AttributeError,OSError):pass
-
-STYLE="""
-QWidget {font-family:'Segoe UI';font-size:13px;color:#eceeef;background:#232121;}
-QMainWindow {background:#232121;} QFrame#titleStrip{background:#282a2d;border-bottom:1px solid #36393d;}
-QFrame#addressBar{background:#191b1d;border-bottom:1px solid #3c3e42;}
-QLabel#brand{font-size:17px;font-weight:600;background:transparent;}
-QLabel#status{font-size:12px;color:#a7c9ad;background:transparent;padding:3px 8px;}
-QLabel#onlineDot{color:#68c56e;background:transparent;} QLabel#headline{font-size:25px;font-weight:600;}
-QLabel#muted{color:#aeb2b8;background:transparent;} QLabel#deviceLabel{font-size:16px;color:#bdc1c6;}
-QLabel#sectionTitle{font-weight:600;} QLabel#tileTitle{font-size:16px;font-weight:600;background:transparent;}
-QLabel#tileDescription{color:#b8bdc4;background:transparent;}
-QFrame#identityHero{border:0;} QFrame#featureTile{background:#282b2e;border:1px solid #3b3f44;border-radius:6px;}
-QFrame#featureTile:hover{border-color:#5b6168;}
-QFrame#permissionsPanel{background:#25282b;border:1px solid #3b3f44;border-radius:6px;}
-QFrame#permissionsPanel QLabel,QFrame#permissionsPanel QCheckBox{background:transparent;}
-QPushButton{background:#303439;border:1px solid #51565d;border-radius:5px;padding:8px 16px;min-height:18px;}
-QPushButton:hover{background:#3a3f45;border-color:#707780;}
-QPushButton:pressed{background:#24282c;border-color:#e17972;}
-QPushButton:focus{border-color:#e8918b;}
-QPushButton:disabled{color:#81868d;border-color:#3b3e43;background:#292c30;}
-QPushButton#primary{background:#e34d44;border-color:#e34d44;color:white;font-weight:600;}
-QPushButton#primary:hover{background:#ef5c52;border-color:#ef5c52;}
-QPushButton#primary:pressed{background:#bf3933;border-color:#ffaba4;}
-QPushButton#primary:focus{border-color:#ffd5d1;}
-QPushButton#primary:disabled{background:#693b39;border-color:#693b39;color:#c09a97;}
-QPushButton#navTab{background:transparent;border:1px solid transparent;min-width:108px;padding:5px 12px;}
-QPushButton#navTab:hover{background:#34383d;}
-QPushButton#navTab[selected="true"]{background:#34383d;color:#fff;}
-QPushButton#navTab:focus{border-color:#e8918b;}
-QFrame#navigationIndicator{background:#ef655b;border:0;}
-QPushButton#tileAction{background:#303439;border:1px solid #51565d;font-weight:600;text-align:center;padding:5px 10px;}
-QPushButton#tileAction:hover{background:#3a3f45;border-color:#707780;color:white;}
-QPushButton#tileAction:pressed{background:#24282c;border-color:#e17972;}
-QPushButton#tileAction:focus{border-color:#e8918b;}
-QToolButton{background:transparent;border:1px solid transparent;border-radius:5px;padding:6px;color:#dde0e4;font-size:18px;}
-QToolButton:hover{background:#373c42;}
-QToolButton:pressed{background:#24282c;border-color:#e17972;}
-QToolButton:focus{border-color:#e8918b;}
-QToolButton:disabled{color:#777d85;background:transparent;border-color:transparent;}
-QToolButton#outlineAccent{border:1px solid #7e5652;color:#f59a92;font-size:13px;padding:5px 11px;}
-QToolButton#outlineAccent:hover{background:#423230;border-color:#ba6f68;}
-QToolButton#outlineAccent:pressed{background:#532f2b;}
-QToolButton#outlineAccent:focus{border-color:#ffd5d1;}
-QToolButton#viewToggle{font-size:17px;padding:4px 8px;color:#929aa0;border:1px solid transparent;}
-QToolButton#viewToggle:checked{background:#393333;border-color:#8e524c;color:#f0786f;}
-QPushButton#textAction{background:transparent;border:0;padding:2px 4px;color:#bfbfbf;}
-QPushButton#textAction:hover{color:#f0786f;}
-QToolButton::menu-indicator{image:none;}
-QLineEdit,QPlainTextEdit,QComboBox{background:#191b1e;border:1px solid #51565d;border-radius:5px;padding:8px;selection-background-color:#91423f;}
-QLineEdit:focus,QPlainTextEdit:focus,QComboBox:focus{border-color:#cf6862;}
-QLineEdit#remoteAddress{background:#151719;border-color:#3d4248;font-size:15px;padding:6px 12px;}
-QLineEdit#remoteAddress:focus{border-color:#e8918b;}
-QLineEdit#localAddress{background:transparent;color:#f04a43;font-size:38px;font-weight:600;letter-spacing:1px;border:0;padding:4px 8px;}
-QComboBox{min-height:20px;} QCheckBox{spacing:8px;padding:4px 0;} QCheckBox::indicator{width:16px;height:16px;}
-QCheckBox::indicator:unchecked{background:#181818;border:1px solid #777;border-radius:2px;}
-QCheckBox::indicator:checked{background:#ef443b;border:1px solid #ef443b;border-radius:2px;}
-QTabWidget#workspace::pane{border:0;} QTabWidget#homeSections::pane{border:0;border-top:1px solid #444;}
-QTabBar::tab{background:transparent;color:#9d9d9d;padding:12px 20px;border-bottom:2px solid transparent;}
-QTabBar::tab:selected{color:#f15a52;border-bottom:2px solid #ef443b;font-weight:600;} QTabBar::tab:hover{color:#eee;}
-QListWidget{background:#202224;border:1px solid #41464d;border-radius:5px;padding:10px;outline:0;}
-QListWidget#deviceCards{border:0;padding:4px 0;} QListWidget#deviceCards::item{background:#292d31;border:1px solid #515860;border-radius:5px;padding:10px;}
-QListWidget#deviceCards::item:selected{background:#453938;border-color:#e86d64;}
-QListWidget::item{padding:12px;} QListWidget::item:selected{background:#493331;color:#fff;}
-QMenu{background:#292d31;border:1px solid #555c65;padding:5px;border-radius:5px;} QMenu::item{padding:8px 26px;border-radius:3px;} QMenu::item:selected{background:#493632;}
-QMenu::item:disabled{color:#7b8189;} QMenu::separator{height:1px;background:#43484f;margin:5px 8px;}
-QToolTip{background:#343a41;color:#f1f2f4;border:1px solid #626b76;padding:5px;}
-QScrollArea{border:0;} QStatusBar{color:#999;border-top:1px solid #363636;font-size:12px;}
-QScrollBar:vertical{background:#242424;width:10px;margin:0;} QScrollBar::handle:vertical{background:#505050;min-height:32px;border-radius:4px;}
-QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;} QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent;}
-QSplitter::handle{background:#444;width:3px;} QDialog{background:#252525;}
-QFrame#sessionToolbar{background:#272727;border:1px solid #3c3c3c;border-radius:3px;}
-QFrame#sessionToolbar QCheckBox{background:transparent;}
-QFrame#acceptHeader{background:#2b2b2b;border-bottom:1px solid #474747;}
-QFrame#incomingNotice{background:#303a42;border:1px solid #526372;border-radius:3px;}
-QFrame#incomingNotice QLabel{background:transparent;color:#d5e0e8;}
-QFrame#acceptHeader QLabel{background:transparent;}
-QFrame#connectorCard{background:#29343e;border:1px solid #4b5964;border-radius:4px;}
-QFrame#connectorCard QLabel{background:transparent;}
-QLabel#connectorName{font-size:18px;font-weight:600;background:transparent;}
-QFrame#acceptFooter{background:#272727;border-top:1px solid #414141;}
-QFrame#acceptFooter QLabel{background:transparent;}
-QPushButton#acceptConnection{background:#357b56;border-color:#4f9c70;color:white;font-weight:600;min-width:82px;}
-QPushButton#acceptConnection:hover{background:#439264;}
-QPushButton#acceptConnection:pressed{background:#285e41;border-color:#b3e4c7;}
-QPushButton#acceptConnection:focus{border-color:#b3e4c7;}
-QToolButton#sessionTool{font-size:13px;padding:7px 10px;}
-QPushButton#dangerOutline{border-color:#a85d56;color:#f08077;background:#302624;}
-QPushButton#dangerOutline:hover{background:#563632;}
-QPushButton#dangerOutline:pressed{background:#6c3831;border-color:#ffaba4;}
-QPushButton#dangerOutline:focus{border-color:#ffaba4;}
-QPushButton#dangerOutline:disabled{border-color:#49403f;color:#81716f;}
-QPushButton:checked{background:#493a38;border-color:#a96a64;}
-QTabWidget#sessionSide::pane{border:1px solid #404040;}
-QTabWidget#sessionSide QTabBar::tab{padding:9px 12px;}
-QListWidget#settingsNavigation{background:#262626;border:0;border-right:1px solid #414141;padding:14px 6px;}
-QListWidget#settingsNavigation::item{padding:12px 10px;border-left:2px solid transparent;}
-QListWidget#settingsNavigation::item:selected{background:#3c302e;border-left-color:#ee635a;}
-"""
-STYLE+='\nQCheckBox::indicator:checked {image:url("'+(ASSETS/'check.svg').as_posix()+'");}\n'
-STYLE+=CONNECTION_STYLE
-STYLE+=IMAGE_STYLE
-from .desk_theme import STYLE as FIDELITY_STYLE
-STYLE+=FIDELITY_STYLE

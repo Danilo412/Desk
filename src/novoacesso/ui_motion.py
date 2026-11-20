@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, QEvent, Qt, QTimer, QVariantAnimation, QProp
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QWidget, QPushButton, QToolButton, QFrame,QLayout
 from shiboken6 import isValid
+from .desk_theme import ELEMENT_RADIUS, MOTION_FAST, MOTION_REVEAL
 
 
 def system_allows_motion():
@@ -30,7 +31,7 @@ class RevealAnimation(QObject):
         self._constraint=widget.layout().sizeConstraint() if widget.layout() else None
         self._minimum_height=widget.minimumHeight();self._samples=[];self._started=None
         self.animation=QPropertyAnimation(widget,b'maximumHeight',self)
-        self.animation.setDuration(260);self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.animation.setDuration(MOTION_REVEAL);self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.animation.valueChanged.connect(self.sample)
         self.animation.finished.connect(self.finish_motion)
         if hasattr(owner,'interface_motion'):owner.interface_motion.transitions.add(self)
@@ -119,7 +120,7 @@ class ButtonFeedback(QWidget):
             self.set_level(.11)
 
     def released(self):
-        self.animate_to(.035 if self.parentWidget().underMouse() else 0, 160)
+        self.animate_to(.035 if self.parentWidget().underMouse() else 0, MOTION_FAST)
 
     def reset(self):
         self.animation.stop()
@@ -132,7 +133,7 @@ class ButtonFeedback(QWidget):
         color.setAlphaF(min(.12, max(0, self.level)))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(color)
-        painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 5, 5)
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), ELEMENT_RADIUS, ELEMENT_RADIUS)
 
 
 class InterfaceMotion(QObject):

@@ -179,7 +179,7 @@ class AdvancedTools:
         if active:
             seconds=int(self.recorder.elapsed);duration=f'{seconds//60:02d}:{seconds%60:02d}'
             text='Finalizando gravação…' if self.recording_finishing else ('Ⅱ Pausado ' if self.recorder.paused else '● Gravando ')+duration
-            self.recording_badge.setText(text);self.recording_badge.setStyleSheet('color:#ff756b;background:transparent;padding:3px 8px;font-weight:600;')
+            self.recording_badge.setText(text)
             self.record_status.setText(text+' · '+('sua tela' if self.record_source=='local' else 'sessão remota'))
             self.pause_record_button.setText('Continuar' if self.recorder.paused else 'Pausar')
 
