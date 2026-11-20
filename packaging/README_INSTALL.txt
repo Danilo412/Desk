@@ -1,6 +1,6 @@
-DESK 0.14.2 — PRÉVIA DE FLUIDEZ E CONTROLE
+DESK 0.14.4 — INTERFACE ASTRYX
 
-Atualize o aplicativo nas duas pontas com Desk-0.14.2-Update.exe.
+Atualize o aplicativo nas duas pontas com Desk-0.14.4-Update.exe.
 O número fixo, a configuração de internet e os acessos salvos são preservados.
 
 No computador que receberá o acesso, abra Configurações > Acesso sem supervisão.
@@ -29,9 +29,8 @@ O aplicativo comum permanece sem elevação. O serviço opcional, aprovado por
 administrador e vinculado ao Desk.exe exato, fornece captura e entrada nas
 telas protegidas durante sessões autorizadas. Não é necessário executar
 toda a interface como administrador a cada abertura.
-Esta atualização 0.14.2 distribui somente o aplicativo. O novo componente
-do serviço opcional foi bloqueado neste PC pelo Windows com erro 4551;
-o instalador Desk-Service-0.14.2-Setup.exe não é distribuído nesta versão.
+A versão 0.14.4 atualiza somente o aplicativo. O pacote não inclui
+o serviço opcional de tela de bloqueio.
 Um serviço anterior vinculado ao hash exato do Desk.exe deixa de reconhecer
 o aplicativo atualizado. Portanto, o acesso à tela bloqueada e às janelas
 protegidas por esse serviço fica pendente. Não remova o serviço existente
@@ -58,3 +57,9 @@ Se falhar ou a saída não corresponder ao monitor, a captura MSS é mantida com
 O cursor separado continua sendo enviado sem compor o ponteiro de hardware sobre a imagem.
 As etapas da captura agora mostram consulta, obtenção da imagem e redimensionamento.
 A melhoria na máquina que antes apresentava captura de 141 ms exige teste real após atualizar.
+
+INTERFACE ASTRYX
+O endereço fixo e o botão de cópia aparecem juntos na tela inicial.
+Os atalhos se reorganizam em janelas menores. Favoritos, configurações,
+solicitações recebidas e controles da sessão usam o mesmo estilo.
+A opção de reduzir animações continua disponível em Configurações > Aparência.

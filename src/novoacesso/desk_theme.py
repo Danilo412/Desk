@@ -100,6 +100,15 @@ QPushButton#dangerOutline:focus { border-color: $focus; }
 QPushButton#dangerOutline:disabled { background: $surface; color: $disabled; }
 QPushButton#outlineAccent, QToolButton#outlineAccent { background: $accent_muted; color: $accent; }
 QPushButton#outlineAccent:hover, QToolButton#outlineAccent:hover { border-color: $accent; }
+QFrame#identityHero QToolButton#outlineAccent, QToolButton#copyAddress {
+    background: $surface; border-color: $control;
+}
+QFrame#identityHero QToolButton#outlineAccent:hover, QToolButton#copyAddress:hover {
+    background: $hover; border-color: $accent;
+}
+QFrame#identityHero QToolButton#outlineAccent:focus, QToolButton#copyAddress:focus {
+    border-color: $focus;
+}
 QPushButton#navTab, QPushButton#textAction { background: transparent; border-color: transparent; }
 QPushButton#navTab:hover, QPushButton#textAction:hover { background: $hover; color: $text; }
 QPushButton#navTab[selected="true"] { background: $accent_muted; color: $accent; }

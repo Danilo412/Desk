@@ -97,7 +97,7 @@ class QuickActionCard(QPushButton):
         col.addStretch();label=QLabel(action+'  →');label.setObjectName('tileAction')
         label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents);col.addWidget(label)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-        self.setMinimumHeight(136)
+        self.setMinimumHeight(128)
 
 class DeviceCardDelegate(QStyledItemDelegate):
     """Draw original device cards; never imply an unverified online state."""
@@ -529,11 +529,11 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         line=QHBoxLayout();line.setSpacing(8)
         self.numeric_code=CopyAddressField();self.numeric_code.setObjectName('localAddress');self.numeric_code.copyRequested.connect(self.copy_invite)
         self.numeric_code.setFrame(False);self.numeric_code.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self.numeric_code.setMinimumWidth(320);self.numeric_code.setMaximumWidth(360)
+        self.numeric_code.setFixedWidth(296)
         self.numeric_code.setPlaceholderText('Preparando endereço…');self.numeric_code.setAccessibleName('Seu endereço Desk')
         self.show_fixed_address()
         line.addWidget(self.numeric_code)
-        self.copy_address_button=QToolButton();self.copy_address_button.setIcon(QIcon(str(ASSETS/'copy.svg')))
+        self.copy_address_button=QToolButton();self.copy_address_button.setObjectName('copyAddress');self.copy_address_button.setIcon(QIcon(str(ASSETS/'copy.svg')))
         self.copy_address_button.setIconSize(QSize(21,21));self.copy_address_button.setToolTip('Copiar seu endereço · Ctrl+Shift+C');self.copy_address_button.setAccessibleName('Copiar seu endereço')
         self.copy_address_button.clicked.connect(self.copy_invite);line.addWidget(self.copy_address_button)
         invite=QToolButton();invite.setText('Convidar');invite.setObjectName('outlineAccent');invite.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -550,7 +550,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         self.home_sections=QTabWidget();self.home_sections.setObjectName('homeSections');outer.addWidget(self.home_sections,1)
         self.device_tools=QWidget();tools=QHBoxLayout(self.device_tools);tools.setContentsMargins(0,0,0,2);tools.setSpacing(5)
         add=QToolButton();add.setText('+');add.setToolTip('Adicionar favorito');add.setAccessibleName('Adicionar favorito');add.clicked.connect(self.add_address_favorite);tools.addWidget(add)
-        self.device_search=QLineEdit();self.device_search.setPlaceholderText('Buscar nos favoritos e sessões recentes')
+        self.device_search=QLineEdit();self.device_search.setPlaceholderText('Buscar computadores')
         self.device_search.setMinimumWidth(190);self.device_search.setMaximumWidth(300)
         self.device_search.setAccessibleName('Buscar computadores salvos e recentes');self.device_search.setClearButtonEnabled(True)
         self.device_search.textChanged.connect(self.filter_devices);tools.addWidget(self.device_search,1)
