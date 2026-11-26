@@ -120,8 +120,17 @@ def write_checksums(publish_dir: Path, files: list[Path]) -> Path:
 
 
 def release_by_tag(tag: str):
-    releases = gh_api(f"repos/{REPO}/releases?per_page=50&desk_check={time.time_ns()}")
-    return next((r for r in releases if r["tag_name"] == tag), None)
+    for _ in range(6):
+        releases = gh_api(f"repos/{REPO}/releases?per_page=50&desk_check={time.time_ns()}")
+        found = next((r for r in releases if r["tag_name"] == tag), None)
+        if found is not None:
+            return found
+        try:
+            view = json.loads(run("gh", "release", "view", tag, "--repo", REPO, "--json", "databaseId,tagName,isDraft"))
+            return gh_api(f"repos/{REPO}/releases/{view['databaseId']}")
+        except subprocess.CalledProcessError:
+            time.sleep(1.5)
+    return None
 
 
 def verify_assets(tag: str, release: dict, files: list[Path]) -> None:
