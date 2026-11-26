@@ -16,7 +16,7 @@ class ScreenPipeline:
     def encode(self,image,mode='auto',now=None):
         if not 1<=image.width<=MAX_WIDTH or not 1<=image.height<=MAX_HEIGHT or image.width*image.height>MAX_PIXELS:raise ProtocolError('Dimensões de captura inválidas.')
         now=time.monotonic() if now is None else now
-        small=np.asarray(image.resize((80,45)).convert('RGB'),dtype=np.int16)
+        small=np.asarray(image.resize((80,45),reducing_gap=3.0).convert('RGB'),dtype=np.int16)
         fraction=0. if self.previous is None else float(np.mean(np.max(np.abs(small-self.previous),axis=2)>18))
         self.previous=small
         # Um vídeo incorporado pode movimentar apenas uma pequena região da

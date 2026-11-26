@@ -70,7 +70,7 @@ class ScreenEncoder:
 
     def encode(self,image,mode="auto",now=None):
         now=time.monotonic() if now is None else now
-        image=image.convert("RGB")
+        if image.mode!='RGB':image=image.convert("RGB")
         if image.width>MAX_WIDTH or image.height>MAX_HEIGHT or image.width*image.height>MAX_PIXELS:raise ProtocolError("Resolução excedida.")
         if image.size!=self.size:
             self.size=image.size;self.previous_raw=None;self.contexts.clear();self.selector=ActivitySelector(now)

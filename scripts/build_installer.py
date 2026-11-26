@@ -1,6 +1,9 @@
 from pathlib import Path
 import urllib.request,hashlib,subprocess,os,json,shutil
-root=Path(__file__).resolve().parents[1];tools=root/'.tools';tools.mkdir(exist_ok=True)
+root=Path(__file__).resolve().parents[1]
+default_tools=Path(os.environ.get('LOCALAPPDATA',Path.home()))/'DeskBuild'/'tools'
+tools=Path(os.environ['DESK_TOOLS_DIR']) if os.environ.get('DESK_TOOLS_DIR') else (default_tools if default_tools.exists() else root/'.tools')
+tools.mkdir(parents=True,exist_ok=True)
 setup=tools/'innosetup-7.1.1-x64.exe';compiler=tools/'InnoSetup/ISCC.exe'
 url='https://github.com/jrsoftware/issrc/releases/download/is-7_1_1/innosetup-7.1.1-x64.exe'
 expected='8a5a6711c3766a6e5fb74f280ba0e3551e719ce94538d901fdbd1f8f9920b3f0'

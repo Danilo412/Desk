@@ -125,9 +125,14 @@ class DesktopBackend:
             raise DesktopInputError(None,'service','desktop_changed')
         self.service_input_geometry=(self.capture_monitor,expected,generation)
 
+    @contextmanager
     def capture_source(self):
         from .capture import CaptureSource
-        return CaptureSource()
+        try:
+            with CaptureSource() as source:yield source
+        finally:
+            scaler=getattr(self,'_screen_scaler',None)
+            if scaler:scaler.close();self._screen_scaler=None
 
     def cursor(self):
         if not hasattr(self,'_cursor_shapes'):
@@ -166,7 +171,16 @@ class DesktopBackend:
         scale_begin=time.monotonic()
         max_height=1440 if width>1920 else 1080 if width>=1920 else 720 if width>=1280 else 1080
         ratio=min(1,width/image.width,max_height/image.height)
-        if ratio<1:image=image.resize((max(1,int(image.width*ratio)),max(1,int(image.height*ratio))),Image.Resampling.LANCZOS)
+        target=(max(1,int(image.width*ratio)),max(1,int(image.height*ratio)))
+        scaler=getattr(self,'_screen_scaler',None)
+        if scaler is None:
+            from .image_scaling import ScreenScaler
+            scaler=self._screen_scaler=ScreenScaler()
+        # Only a provider-confirmed unchanged frame may reuse a scaled image.
+        # Geometry/source/target changes invalidate the cache even if a provider
+        # reuses its PIL object. Native coordinates still use the original rect.
+        source_key=(id(source),index,tuple(rect[k] for k in ('left','top','width','height')))
+        image=scaler.resize(image,target,source_key,bool(getattr(source,'unchanged',False)))
         self.last_capture_metrics.update(capture_grab_ms=round((scale_begin-grab_begin)*1000,2),capture_scale_ms=round((time.monotonic()-scale_begin)*1000,2))
         return image
 

@@ -1,6 +1,6 @@
-DESK 0.14.4 — INTERFACE ASTRYX
+DESK 0.15.0 — INTERFACE ASTRYX E ATUALIZAÇÕES AUTOMÁTICAS
 
-Atualize o aplicativo nas duas pontas com Desk-0.14.4-Update.exe.
+Atualize o aplicativo nas duas pontas com Desk-0.15.0-Update.exe.
 O número fixo, a configuração de internet e os acessos salvos são preservados.
 
 No computador que receberá o acesso, abra Configurações > Acesso sem supervisão.
@@ -29,7 +29,7 @@ O aplicativo comum permanece sem elevação. O serviço opcional, aprovado por
 administrador e vinculado ao Desk.exe exato, fornece captura e entrada nas
 telas protegidas durante sessões autorizadas. Não é necessário executar
 toda a interface como administrador a cada abertura.
-A versão 0.14.4 atualiza somente o aplicativo. O pacote não inclui
+A versão 0.15.0 atualiza somente o aplicativo. O pacote não inclui
 o serviço opcional de tela de bloqueio.
 Um serviço anterior vinculado ao hash exato do Desk.exe deixa de reconhecer
 o aplicativo atualizado. Portanto, o acesso à tela bloqueada e às janelas

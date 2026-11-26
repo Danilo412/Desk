@@ -48,3 +48,23 @@ def test_fullscreen_slide_stops_on_escape_and_window_controls_restore(tmp_path,m
         assert not window._fullscreen and bar.isHidden() and window.viewer.parent() is window.session_split
         assert bar.slide.state()==QAbstractAnimation.State.Stopped and not errors
     finally:window.close();QTest.qWait(30)
+
+
+def test_settings_navigation_icons_and_session_capture_button(tmp_path,monkeypatch):
+    import threading
+    from types import SimpleNamespace
+    from PIL import Image
+    monkeypatch.setenv('NOVOACESSO_STATE_DIR',str(tmp_path))
+    window=MainWindow();window.show();QTest.qWait(30)
+    try:
+        assert window.settings_navigation.count()==7
+        for i in range(window.settings_navigation.count()):
+            assert not window.settings_navigation.item(i).icon().isNull()
+        assert window.update_banner.isHidden()
+        assert not window.session_screenshot_button.isEnabled()
+        window.peer=SimpleNamespace(role='viewer',permissions=dict(control=False,audio=False,clipboard=False),closed=threading.Event(),remote_capabilities=set())
+        window.canvas.set_frame(Image.new('RGB',(320,180),'navy'))
+        window.update_session_actions()
+        assert window.session_screenshot_button.isEnabled()
+    finally:
+        window.peer=None;window.close();QTest.qWait(30)

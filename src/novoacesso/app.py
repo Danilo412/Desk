@@ -12,7 +12,7 @@ import threading
 import time
 
 from PySide6.QtCore import Qt,QObject,Signal,QTimer,QRectF,QEvent
-from PySide6.QtGui import QColor,QImage,QPainter,QPen,QFont,QAction,QShortcut,QKeySequence
+from PySide6.QtGui import QColor,QImage,QPainter,QPen,QFont,QAction,QShortcut,QKeySequence,QIcon
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QGridLayout,
     QLabel,QPushButton,QLineEdit,QPlainTextEdit,QCheckBox,QComboBox,QTabWidget,QFrame,
     QFileDialog,QMessageBox,QSplitter,QSizePolicy,QListWidget,QListWidgetItem,QSystemTrayIcon,QMenu,QStyle,QScrollArea,QDialog,QInputDialog)
@@ -273,6 +273,7 @@ class MainWindow(DeskShell,QMainWindow):
         self.notifications=NotificationCenter(self)
         self.apply_view_preferences(self.identity.settings().get('view'))
         self.frame_timer=QTimer(self);self.frame_timer.setInterval(16);self.frame_timer.timeout.connect(self.render_latest_frame);self.frame_timer.start()
+        self.statusBar().setSizeGripEnabled(False)
         self.statusBar().showMessage("Nenhum acesso remoto ativo.")
         QApplication.clipboard().dataChanged.connect(self.clipboard_changed)
         self.tray=QSystemTrayIcon(self.windowIcon(),self)
@@ -935,7 +936,8 @@ class MainWindow(DeskShell,QMainWindow):
         self.stop_sharing();self.control.setChecked(False);self.control_authorized=False;self.status.setText('Acesso permanente disponível' if self.persistent else 'Desconectado')
         if not self.closing:
             self.show_connection_state('cancelled' if self._connection_state in ('connecting','locating','approval','authenticating','reconnecting') else 'ended')
-            self.session_nav.setText('Sessão')
+            self.session_nav.setText('Sessão');self.session_nav.setIcon(QIcon())
+            self.statusBar().showMessage(self.status.text())
             if self._desk_listening_requested:QTimer.singleShot(300,self.prepare_address)
     def fullscreen(self):
         if self._fullscreen:self.exit_fullscreen();return
@@ -971,6 +973,8 @@ class MainWindow(DeskShell,QMainWindow):
         if not self.persistent or self.force_exit:self.address_timer.stop()
         if self.persistent and not self.force_exit:
             self.hide();self.tray.show();event.ignore();return
+        if not self.updates.busy():
+            self.updates.maybe_install_on_exit()
         self.closing=True
         self.updates.stop()
         self.notifications.stop()

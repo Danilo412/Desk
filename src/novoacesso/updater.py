@@ -81,7 +81,8 @@ def _open(url):
     request=urllib.request.Request(url,headers={'User-Agent':'Desk-Updater','Cache-Control':'no-cache'})
     return urllib.request.build_opener(_Redirects()).open(request,timeout=20)
 
-def check_update(current_version,opener=_open):
+def check_update(current_version,opener=None):
+    if opener is None:opener=_open
     try:
         # GitHub's latest redirect can briefly retain the preceding release
         # after publication. A fresh query avoids reporting that stale result.
@@ -93,7 +94,58 @@ def check_update(current_version,opener=_open):
     except UpdateError:raise
     except Exception as error:raise UpdateError('Sem resposta do serviço de atualização. Tente novamente mais tarde.') from error
 
-def download_update(update,cache,progress=lambda received,total:None,cancel=None,opener=_open):
+def _file_sha256(path):
+    digest=hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        while chunk:=stream.read(1024*1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+def verify_installer_file(path,update):
+    target=Path(path)
+    if not target.is_file():return False
+    try:
+        return target.stat().st_size==update.size and _file_sha256(target)==update.sha256
+    except OSError:
+        return False
+
+def cached_filename(update):
+    version_tuple(update.version)
+    return f'Desk-{update.version}-Update.exe'
+
+def cached_update_path(update,cache):
+    try:target=Path(cache)/cached_filename(update)
+    except UpdateError:return None
+    return target if verify_installer_file(target,update) else None
+
+def promote_cached_update(update,path,cache):
+    source=Path(path)
+    target=Path(cache)/cached_filename(update)
+    if source.resolve()==target.resolve():return target
+    try:
+        source.replace(target)
+        return target
+    except OSError:
+        return source
+
+def cleanup_old_downloads(cache,keep_path=None):
+    folder=Path(cache)
+    if not folder.is_dir():return
+    keep=Path(keep_path).resolve() if keep_path else None
+    for entry in folder.iterdir():
+        try:
+            if not entry.is_file():continue
+            if keep is not None and entry.resolve()==keep:continue
+            name=entry.name
+            if name.startswith('desk-update-') and name.endswith(('.part','.exe')):
+                entry.unlink(missing_ok=True)
+            elif name.startswith('Desk-') and name.endswith('-Update.exe'):
+                entry.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+def download_update(update,cache,progress=lambda received,total:None,cancel=None,opener=None):
+    if opener is None:opener=_open
     cache=Path(cache);cache.mkdir(parents=True,exist_ok=True)
     fd,name=tempfile.mkstemp(prefix='desk-update-',suffix='.part',dir=cache)
     temporary=Path(name);target=temporary.with_suffix('.exe')
@@ -137,6 +189,6 @@ def launch_installer(path,update,installation,runner=subprocess.Popen):
     installation, forced application close, reboot, or protection override.
     """
     path=Path(path).resolve();installation=Path(installation).resolve()
-    if path.stat().st_size!=update.size or hashlib.sha256(path.read_bytes()).hexdigest()!=update.sha256:
+    if path.stat().st_size!=update.size or _file_sha256(path)!=update.sha256:
         raise UpdateError('O instalador foi alterado depois do download. Baixe novamente.')
     return runner([str(path),'/DIR='+str(installation),'/NORESTART','/NOCLOSEAPPLICATIONS','/NORESTARTAPPLICATIONS'],cwd=installation)

@@ -158,6 +158,9 @@ class ConnectionFlow:
         self.remote_invite.setReadOnly(bool(self.connecting or self.peer))
         self.session_close.setEnabled(bool(self.connecting or self.peer or self.retry_timer.isActive()))
         if state not in ('active','receiving','sharing'):self._session_started=None;self.session_elapsed.clear()
+        if hasattr(self,'statusBar'):
+            if state=='idle':self.statusBar().showMessage('Nenhum acesso remoto ativo.')
+            else:self.statusBar().showMessage(f'{self.session_device.text()} · {badge}')
         self.update_session_actions()
 
     def connection_primary_action(self):

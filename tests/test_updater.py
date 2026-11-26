@@ -133,3 +133,60 @@ def test_update_page_shows_installed_version_result_and_clickable_notification(t
     finally:
         if controller.dialog:controller.dialog.close()
         window.close();QApplication.processEvents()
+
+def test_background_auto_download_caches_and_cleans_old_installers(tmp_path,monkeypatch,signed):
+    from novoacesso.app import MainWindow
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtTest import QTest
+    import time
+    payload,body,public,encode=signed
+    state=tmp_path/'state';cache=tmp_path/'localappdata'/'Desk'/'Updates';cache.mkdir(parents=True)
+    stale=cache/'Desk-0.11.0-Update.exe';stale.write_bytes(b'old');stale_part=cache/'desk-update-old.part';stale_part.write_bytes(b'part')
+    monkeypatch.setenv('NOVOACESSO_STATE_DIR',str(state))
+    monkeypatch.setenv('LOCALAPPDATA',str(tmp_path/'localappdata'))
+    monkeypatch.setattr(updater,'_open',lambda url:io.BytesIO(body))
+    launched=[];monkeypatch.setattr(updater,'launch_installer',lambda *a:launched.append(a))
+    window=MainWindow();controller=window.updates;controller.installation=tmp_path/'install'
+    try:
+        update=updater.verify_manifest(encode(),'0.12.0',public)
+        monkeypatch.setenv('NOVOACESSO_OFFLINE','0')
+        controller.on_checked(update,'',False)
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline and not controller.is_ready():
+            QApplication.processEvents();QTest.qWait(20)
+        assert controller.is_ready()
+        assert Path(controller.download_path)==cache/f'Desk-{update.version}-Update.exe'
+        assert not stale.exists() and not stale_part.exists()
+        assert 'Instalar' in window.update_available_button.text()
+        assert window.update_banner.isVisibleTo(window)
+        assert not launched
+        controller.show_offer()
+        assert controller.action.text()=='Instalar e fechar o Desk'
+        controller.dialog.close();QApplication.processEvents()
+        assert controller.is_ready()
+        controller.show_offer()
+        assert controller.action.text()=='Instalar e fechar o Desk'
+    finally:
+        if controller.dialog:controller.dialog.close()
+        window.close();QApplication.processEvents()
+
+def test_auto_install_on_exit_respects_setting_and_active_session(tmp_path,monkeypatch,signed):
+    from novoacesso.app import MainWindow
+    from PySide6.QtWidgets import QApplication
+    payload,body,public,encode=signed
+    monkeypatch.setenv('NOVOACESSO_STATE_DIR',str(tmp_path/'state'))
+    launched=[];monkeypatch.setattr(updater,'launch_installer',lambda *a:launched.append(a))
+    window=MainWindow();controller=window.updates;controller.installation=tmp_path/'install'
+    update=updater.verify_manifest(encode(),'0.12.0',public)
+    installer=tmp_path/f'Desk-{update.version}-Update.exe';installer.write_bytes(body)
+    controller.available=update;controller.download_path=installer;controller.downloaded_version=update.version
+    try:
+        assert not controller.maybe_install_on_exit() and not launched
+        window.auto_install_on_exit.setChecked(True)
+        window.peer=SimpleNamespace(closed=threading.Event())
+        assert not controller.maybe_install_on_exit() and not launched
+        window.peer=None
+        assert controller.maybe_install_on_exit() and len(launched)==1
+        assert not controller.maybe_install_on_exit() and len(launched)==1
+    finally:
+        window.close();QApplication.processEvents()

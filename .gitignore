@@ -6,6 +6,7 @@ venv/
 build/
 dist/
 .tools/
+preview/
 internet.json
 identity.dat
 *.pfx
