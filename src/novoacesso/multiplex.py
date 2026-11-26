@@ -2,7 +2,7 @@
 from collections import deque
 import json,queue,struct,threading,time
 
-FRAGMENT=4096
+FRAGMENT=8192
 MAX_FRAGMENT=16384  # Older v2 clients still send 16 KiB fragments.
 META=struct.Struct('>BcIII')  # lane, original kind, message id, total bytes, offset
 LIMITS=(32,2,4,8)

@@ -74,7 +74,7 @@ def relay_socket(endpoint,room,route,role,waiting=None,wait_timeout=100,register
     context=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT);context.check_hostname=False;context.verify_mode=ssl.CERT_NONE
     context.minimum_version=ssl.TLSVersion.TLSv1_3
     raw=socket.create_connection((endpoint['host'],endpoint['port']),timeout=10)
-    raw.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1);raw.setsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF,65536)
+    raw.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1);raw.setsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF,262144);raw.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF,262144)
     try:
         sock=context.wrap_socket(raw,server_hostname='novoacesso-relay')
         if hashlib.sha256(sock.getpeercert(binary_form=True)).hexdigest()!=endpoint['fp']:raise ProtocolError('Certificado do relay diferente da configuração.')
@@ -160,7 +160,7 @@ def peer_client_socket(data,force_relay=False):
         except BaseException:outer.close();raise
     else:
         raw=socket.create_connection((data['host'],data['port']),timeout=12)
-        raw.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1);raw.setsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF,65536)
+        raw.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1);raw.setsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF,262144);raw.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF,262144)
         try:sock=context.wrap_socket(raw,server_hostname='novoacesso')
         except BaseException:raw.close();raise
     if not secrets.compare_digest(hashlib.sha256(sock.getpeercert(binary_form=True)).hexdigest(),data['fp']):

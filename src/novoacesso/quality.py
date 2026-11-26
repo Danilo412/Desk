@@ -1,5 +1,5 @@
 """Perfis de transmissão e preferências persistidas por computador."""
-PROFILES=(('Full HD · 1080p / 30 FPS',1920,30),('Full HD · 1080p / 60 FPS',1920,60),('QHD · 1440p / 30 FPS',2560,30),('QHD · 1440p / 60 FPS',2560,60),('Economia · 720p / 30 FPS',1280,30))
+PROFILES=(('Full HD · 1080p / 30 FPS',1920,30),('Full HD · 1080p / 60 FPS',1920,60),('QHD · 1440p / 30 FPS',2560,30),('QHD · 1440p / 60 FPS',2560,60),('Economia · 720p / 30 FPS',1280,30),('Rede distante · 960p / 24 FPS',960,24))
 WIDTHS=(640,960,1280,1920,2560)
 FPS=(15,24,30,60)
 MAX_WIDTH=2560;MAX_HEIGHT=1440;MAX_PIXELS=MAX_WIDTH*MAX_HEIGHT

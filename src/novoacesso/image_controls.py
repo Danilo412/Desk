@@ -4,7 +4,8 @@ from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QRadioButto
 
 PRESETS=(('quality','Melhor qualidade','Até 1440p · 30 FPS · mais detalhes',(2560,30)),
          ('balanced','Equilibrado','Até 1080p · 30 FPS · uso geral',(1920,30)),
-         ('performance','Melhor desempenho','Até 720p · 30 FPS · menos tráfego',(1280,30)))
+         ('performance','Melhor desempenho','Até 720p · 30 FPS · menos tráfego',(1280,30)),
+         ('remote','Rede distante','Até 960p · 24 FPS · mais fluidez em outra rede ou 4G',(960,24)))
 
 class ImageSettingsPanel(QWidget):
     def __init__(self,owner):
@@ -15,7 +16,7 @@ class ImageSettingsPanel(QWidget):
         self.group=QButtonGroup(self);self.buttons={}
         choices=QWidget();choices.setObjectName('segmentedGroup');segments=QHBoxLayout(choices);segments.setContentsMargins(0,0,0,0);segments.setSpacing(0)
         for key,label,description,value in PRESETS:
-            button=QPushButton({'quality':'Qualidade','balanced':'Equilibrado','performance':'Desempenho'}[key]);button.setCheckable(True);button.setObjectName('segment')
+            button=QPushButton({'quality':'Qualidade','balanced':'Equilibrado','performance':'Desempenho','remote':'Distante'}[key]);button.setCheckable(True);button.setObjectName('segment')
             button.setAccessibleName(label);button.setToolTip(label+' · '+description)
             self.group.addButton(button);self.buttons[key]=button;segments.addWidget(button,1)
             button.toggled.connect(lambda checked,v=value:owner.choose_image_profile(v) if checked else None)
@@ -48,7 +49,7 @@ class ImageSettingsPanel(QWidget):
         self.codec=QComboBox()
         for i in range(owner.codec.count()):self.codec.addItem(owner.codec.itemText(i),owner.codec.itemData(i))
         self.codec.currentIndexChanged.connect(lambda index:owner.codec.setCurrentIndex(owner.codec.findData(self.codec.currentData())));advanced.addWidget(self.codec)
-        note=QLabel('O Desk prioriza a nitidez e reduz o ritmo dos quadros quando a conexão fica sobrecarregada. Original mostra um pixel por pixel; Ajustar mantém as proporções dentro da janela. O limite solicitado não cria detalhes que não existem na tela de origem.');note.setWordWrap(True);note.setObjectName('imageHint');advanced.addWidget(note)
+        note=QLabel('O Desk otimiza automaticamente a taxa de bits e o ritmo dos quadros para conexões locais ou distantes, preservando a nitidez do texto. Original mostra um pixel por pixel; Ajustar mantém as proporções dentro da janela.');note.setWordWrap(True);note.setObjectName('imageHint');advanced.addWidget(note)
         self.advanced.hide();col.addWidget(self.advanced)
         from .ui_motion import reveal_widget
         self.advanced_toggle.toggled.connect(lambda on:reveal_widget(self.advanced,on,owner));self.advanced_toggle.toggled.connect(lambda on:self.advanced_toggle.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow))
@@ -77,7 +78,7 @@ class ImageControls:
     def make_image_panel(self,compact=False):
         panel=ImageSettingsPanel(self)
         if not compact:return panel
-        scroll=QScrollArea();scroll.setObjectName('imagePopup');scroll.setWidgetResizable(True);scroll.setWidget(panel);scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);scroll.setFixedSize(410,560)
+        scroll=QScrollArea();scroll.setObjectName('imagePopup');scroll.setWidgetResizable(True);scroll.setWidget(panel);scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);scroll.setFixedSize(450,560)
         return scroll
 
     def choose_image_profile(self,value):

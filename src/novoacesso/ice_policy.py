@@ -124,6 +124,6 @@ def create_peer(servers,relay_only=False):
         option={k:v for k,v in option.items() if k.startswith('turn_')}
         identity=(option['turn_server'],option.get('turn_transport'),option.get('turn_ssl'))
         if identity not in seen:options.append(option);seen.add(identity)
-        if len(options)>=2:break
+        if len(options)>=4:break
     pc._novo_turn_options=options
     return pc

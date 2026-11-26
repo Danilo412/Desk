@@ -120,3 +120,42 @@ def test_real_tls_v2_video_and_feedback():
     finally:
         if viewer:viewer.close();viewer.wait_for_workers()
         host.stop()
+
+def test_wan_mode_scales_vp8_bitrate_and_hold_without_resetting_encoder():
+    pipeline=ScreenPipeline()
+    pipeline.configure_network(rtt_ms=160,wan_mode=True)
+    first=Image.new('RGB',(1280,720),'white')
+    changed=first.copy();changed.paste('navy',(80,80,480,360))
+    pipeline.encode(first,now=1.0)
+    kind,_,_=pipeline.encode(changed,now=2.0)
+    assert kind==b'W' and 900_000<=pipeline.bitrate<=4_500_000
+    context=pipeline.video
+    pipeline.configure_network(rtt_ms=210,wan_mode=True)
+    assert pipeline.video is context
+    # Em WAN, pausas curtas (<1.2s) mantêm VP8 e evitam rajadas DEFLATE repetidas.
+    assert pipeline.encode(changed,now=2.8)[0]==b'W'
+    assert pipeline.encode(changed,now=3.3)[0]==b'V'
+
+def test_high_rtt_transport_fragment_adaptive_and_four_turn_candidates():
+    from novoacesso import multiplex
+    from novoacesso.ice_policy import create_peer
+    assert multiplex.FRAGMENT==8192 and multiplex.FRAGMENT<=multiplex.MAX_FRAGMENT
+    q=AdaptiveQuality()
+    for t in range(1,5):fps,factor=q.observe(30,5,2,now=t)
+    dropped=fps
+    assert dropped<30 and factor==1.
+    fps,_=q.observe(30,5,0,now=5)
+    assert fps==dropped
+    fps,factor=q.observe(30,5,0,now=6)
+    assert fps==min(30,dropped+4) and factor==1.
+    servers=[
+        dict(urls=['turn:turn.example.com:3478?transport=udp'],username='u',credential='p'),
+        dict(urls=['turn:turn.example.com:3478?transport=tcp'],username='u',credential='p'),
+        dict(urls=['turns:turn.example.com:443?transport=tcp'],username='u',credential='p'),
+        dict(urls=['turn:turn.example.com:80?transport=tcp'],username='u',credential='p'),
+    ]
+    pc=create_peer(servers)
+    try:assert len(pc._novo_turn_options)==4
+    finally:
+        import asyncio
+        asyncio.run(pc.close())

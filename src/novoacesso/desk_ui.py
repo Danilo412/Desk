@@ -934,7 +934,7 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         title=QLabel('Desk');title.setObjectName('headline');title_col.addWidget(title)
         title_col.addWidget(QLabel('Versão '+__version__+' · Seu computador, a uma conexão de distância.'));head.addLayout(title_col,1)
         col.addLayout(head)
-        text=QLabel('Conecte pelo endereço fixo ou pelos computadores favoritos. Cada conexão recebida precisa de aceite, exceto dispositivos que você autorizou previamente para acesso sem supervisão.\n\nO endereço numérico pertence à identidade deste computador e permanece igual ao fechar, reiniciar ou desconectar. Os dados temporários da conexão são renovados internamente. Para receber acesso, mantenha o computador ligado e o Desk aberto.\n\nDesk é um aplicativo independente. Os endereços pertencem à rede Desk. Não se conecta a clientes AnyDesk.\n\nPara usar esta edição local, mantenha o ambiente instalado neste computador. A edição portátil assinada permanece separada.')
+        text=QLabel('Conecte pelo endereço fixo ou pelos computadores favoritos. Cada conexão recebida precisa de aceite, exceto dispositivos ou senhas previamente autorizados pelo proprietário.\n\nO endereço numérico pertence à identidade deste computador e permanece igual ao fechar, reiniciar ou desconectar. Todas as sessões contam com criptografia de ponta a ponta (TLS 1.3), otimização automática para redes locais ou distantes e verificações criptográficas nas atualizações.\n\nDesk é um aplicativo independente. Os endereços pertencem à rede Desk e não se conectam a clientes AnyDesk.')
         text.setWordWrap(True);col.addWidget(text)
         outer.addWidget(card);outer.addStretch();self.tabs.addTab(page,'Sobre o Desk')
 
@@ -1083,7 +1083,12 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
             received=getattr(self.peer,'receive_metrics',{}) if self.peer else {}
             fps=received.get('received_fps',stats.get('effective_fps',stats.get('frames',0)/max(.001,stats.get('seconds',1))))
             if stats:
-                self.metrics.setToolTip(self.metrics.text());self.metrics.setText(f"{stats.get('width',0)} × {stats.get('height',0)}  ·  {fps:.0f} FPS recebidos  ·  {stats.get('rtt_ms',0):.0f} ms")
+                rtt=float(stats.get('rtt_ms',0) or 0)
+                raw_route=str(stats.get('route','') or '').lower()
+                route_label='Relay TURN' if 'relay' in raw_route else ('Conexão direta' if 'diret' in raw_route else '')
+                quality_label='Excelente' if rtt<70 else ('Boa' if rtt<150 else 'Rede distante')
+                self.metrics.setToolTip(self.metrics.text())
+                self.metrics.setText(f"{stats.get('width',0)} × {stats.get('height',0)}  ·  {fps:.0f} FPS  ·  {rtt:.0f} ms  ·  {route_label or quality_label}")
             self.record_connection_metrics(stats,received)
         self.on_connection_event(name,data)
         self.on_collaboration_event(name,data)

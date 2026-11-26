@@ -70,3 +70,21 @@ def test_fullscreen_image_actions_and_file_dialog_use_current_window(tmp_path,mo
         window.fullscreen_tools.actions.menu().actions()[0].trigger();QTest.qWait(30)
         assert not window._fullscreen and window.session_side.currentIndex()==0
     finally:window.peer=None;window.close();QTest.qWait(20)
+
+def test_remote_preset_live_metrics_and_professional_about_copy(tmp_path,monkeypatch):
+    from PySide6.QtWidgets import QLabel
+    monkeypatch.setenv('NOVOACESSO_STATE_DIR',str(tmp_path));window=MainWindow();messages=[];window.peer=peer(messages)
+    try:
+        window.monitor.addItem('Monitor 1',1);window.monitor.setCurrentIndex(0);messages.clear()
+        assert preferences(dict(width=960,fps=24))['width']==960 and preferences(dict(width=960,fps=24))['fps']==24
+        window._image_panels[0].buttons['remote'].click()
+        assert window.quality.currentData()==(960,24)
+        assert all(p.buttons['remote'].isChecked() for p in window._image_panels)
+        assert messages[-1]['width']==960 and messages[-1]['fps']==24
+        window.on_event('stats',dict(width=960,height=540,frames=24,seconds=1.0,bytes=120000,deflate=0,vp8=1,effective_fps=24,rtt_ms=172,route='WebRTC: relay'))
+        assert '960 × 540' in window.metrics.text() and '172 ms' in window.metrics.text() and 'Relay TURN' in window.metrics.text()
+        assert 'WebRTC: relay' in window.metrics.toolTip()
+        about_tab=next(window.tabs.widget(i) for i in range(window.tabs.count()) if window.tabs.tabText(i)=='Sobre o Desk')
+        about_text='\n'.join(label.text() for label in about_tab.findChildren(QLabel))
+        assert 'TLS 1.3' in about_text and 'edição portátil assinada permanece separada' not in about_text
+    finally:window.peer=None;window.close();QTest.qWait(20)

@@ -164,7 +164,7 @@ class Peer:
 
     def _capture(self):
         modern=getattr(self.channel,'version',1)>=2
-        encoder=ScreenPipeline() if modern else ScreenEncoder();last_stats=0;sent=0;started=time.monotonic()
+        encoder=ScreenPipeline() if modern else ScreenEncoder();last_stats=0;sent=0;started=time.monotonic();last_empty_sent=0.;last_overload_note=0.
         try:
             with self.backend.capture_source() as source:
                 while not self.closed.is_set():
@@ -174,11 +174,21 @@ class Peer:
                         self.closed.wait(.1);continue
                     if modern:
                         import math
-                        budget=max(2,min(8,math.ceil(max(50,self.quality.rtt_ms)*fps/1000)+1))
+                        outer=getattr(self.channel.sock,'outer',None)
+                        route_info=str(getattr(outer,'route_info',''))
+                        wan_route=outer is not None and ('relay' in route_info.lower() or 'webrtc' in route_info.lower())
+                        encoder.configure_network(self.quality.rtt_ms,wan_route)
+                        budget=max(2,min(10,math.ceil(max(50,self.quality.rtt_ms)*fps/1000)+2))
+                        byte_budget=max(256*1024,min(768*1024,int(max(60,self.quality.rtt_ms)*2560)))
                         with self.feedback_lock:
-                            waiting=len(self.sent_frames)>=budget or sum(self.sent_frame_bytes.values())>=192*1024
+                            pending_count=len(self.sent_frames);pending_bytes=sum(self.sent_frame_bytes.values())
+                            oldest_age=(begin-next(iter(self.sent_frames.values()))) if self.sent_frames else 0.
+                        waiting=pending_count>=budget or pending_bytes>=byte_budget
                         if waiting:
-                            self.quality.observe(fps,self.quality.encode_ms,2);self.closed.wait(.005);continue
+                            overloaded=pending_bytes>=byte_budget or oldest_age>max(.25,self.quality.rtt_ms/1000.*1.6+.12)
+                            if overloaded and begin-last_overload_note>=.2:
+                                last_overload_note=begin;self.quality.observe(fps,self.quality.encode_ms,2)
+                            self.closed.wait(.005);continue
                     # Não gerar deltas enquanto os quadros anteriores aguardam envio.
                     # Pular antes de codificar preserva a cadeia de deltas e evita atraso acumulado.
                     if getattr(self.channel.outgoing,'video_pending',self.channel.outgoing.qsize)()>=2:
@@ -203,16 +213,19 @@ class Peer:
                     else:
                         payload,stats=encoder.encode(image,mode);frame_kind=b'V'
                     effective,factor=self.quality.observe(fps,(time.monotonic()-encode_begin)*1000,backlog)
-                    if modern:
-                        encoder.factor=factor
-                        import struct
-                        seq=struct.unpack_from('>I',payload)[0]
-                        with self.feedback_lock:
-                            self.sent_frames[seq]=begin
-                            self.sent_frame_bytes[seq]=len(payload)
-                            while len(self.sent_frames)>64:
-                                previous=next(iter(self.sent_frames));self.sent_frames.pop(previous);self.sent_frame_bytes.pop(previous,None)
-                    self.channel.send(frame_kind,payload);sent+=len(payload)
+                    if modern:encoder.factor=factor
+                    skip_empty=frame_kind==b'V' and stats.get('tiles',1)==0 and encoder.frames>1 and (begin-last_empty_sent)<.5
+                    if not skip_empty:
+                        if frame_kind==b'V' and stats.get('tiles',1)==0:last_empty_sent=begin
+                        if modern:
+                            import struct
+                            seq=struct.unpack_from('>I',payload)[0]
+                            with self.feedback_lock:
+                                self.sent_frames[seq]=begin
+                                self.sent_frame_bytes[seq]=len(payload)
+                                while len(self.sent_frames)>64:
+                                    previous=next(iter(self.sent_frames));self.sent_frames.pop(previous);self.sent_frame_bytes.pop(previous,None)
+                        self.channel.send(frame_kind,payload);sent+=len(payload)
                     if begin-last_stats>=1:
                         last_stats=begin
                         outer=getattr(self.channel.sock,'outer',None)

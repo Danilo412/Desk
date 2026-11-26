@@ -26,7 +26,7 @@ class AdaptiveQuality:
                     self.target_fps=max(8,min(requested,int(self.target_fps*.8)));self.healthy=0
                 else:
                     self.healthy+=1
-                    if self.healthy>=3:self.target_fps=min(requested,self.target_fps+5);self.healthy=0
+                    if self.healthy>=2:self.target_fps=min(requested,self.target_fps+4);self.healthy=0
                 self.updated=now
             return max(1,min(requested,self.target_fps)),self.factor
     def snapshot(self):

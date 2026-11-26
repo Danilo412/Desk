@@ -39,7 +39,7 @@ class MeteredStream:
                 return create_peer(self.ice_servers,self.relay_only)
             options['_pc_factory']=pc_factory
         peer=(self.peer_factory or MeteredPeer)(**options)
-        channels=[];audio_channels=[];tasks=[];selected=[None];incoming=asyncio.Queue(maxsize=32)
+        channels=[];audio_channels=[];tasks=[];selected=[None];incoming=asyncio.Queue(maxsize=64)
         def bind_audio(raw,remote):
             if remote is not self.remote_peer:raw.close();return
             if self.audio_channel is raw:return
@@ -74,9 +74,8 @@ class MeteredStream:
                 if handler and isinstance(data,bytes) and 24<len(data)<=536:handler(data)
             if raw.readyState=='open':self.input_ready.set()
         self._bind_input=bind_input
-        # 256 KiB in flight, below the data-channel's 512 KiB high-water mark.
-        # A 128 KiB window caps a 150 ms route around 7 Mbit/s.
-        window=asyncio.BoundedSemaphore(16)
+        # 384 KiB in flight (< 32 peer incoming queue bound), improving high-RTT throughput.
+        window=asyncio.BoundedSemaphore(24)
         async def outbound(dc):
             try:
                 while not self.done.is_set():
@@ -97,7 +96,7 @@ class MeteredStream:
             if raw.label=='desk-audio-v1':bind_audio(raw,remote);return
             if raw.label=='desk-input-v1':bind_input(raw,remote);return
             if len(channels)>=4:raw.close();self.failure='Muitos dispositivos nesta sala.';self.done.set();return
-            dc=DataChannel(raw,max_buffered_amount=512*1024,max_queued_sends=8);channels.append(dc)
+            dc=DataChannel(raw,max_buffered_amount=1024*1024,max_queued_sends=16);channels.append(dc)
             def opened(*args):
                 if selected[0] is dc:return
                 if selected[0] is not None:dc.close();return
