@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("test", "run", "build", "publish", "dry-run")]
+    [ValidateSet("test", "run", "build", "store", "publish", "dry-run")]
     [string]$Task = "test"
 )
 
@@ -25,6 +25,9 @@ try {
         }
         "build" {
             & $Python (Join-Path $RepoRoot "scripts\publish_release.py") --skip-tests --dry-run
+        }
+        "store" {
+            & $Python (Join-Path $RepoRoot "scripts\build_store_msix.py") --build
         }
         "dry-run" {
             & $Python (Join-Path $RepoRoot "scripts\publish_release.py") --dry-run

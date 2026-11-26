@@ -368,7 +368,8 @@ class MainWindow(DeskShell,QMainWindow):
         from .wire import ProtocolError
         from .relay import endpoint_from_token
         try:
-            config_path=(Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[2])/'internet.json'
+            from .package_support import internet_config_path
+            config_path=internet_config_path(__file__)
             cloud={} if os.environ.get('NOVOACESSO_OFFLINE')=='1' else json.loads(config_path.read_text(encoding='utf-8'))
             candidate=cloud.get('public_key','')
             if candidate and cloud.get('ice_servers'):
@@ -1009,28 +1010,32 @@ def main():
         from .advanced_diagnostics import advanced_test
         relay=None
         if args.advanced_relay_test:
+            from .package_support import internet_config_path
             from .relay import validate_endpoint
-            config=(Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[2])/'internet.json'
+            config=internet_config_path(__file__)
             cloud=json.loads(config.read_text(encoding='utf-8'));relay=validate_endpoint(dict(mode='metered',api_key=cloud['public_key'],ice_servers=cloud['ice_servers'],relay_only=True))
         result=advanced_test(relay)
         if args.result:Path(args.result).write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
         return 0 if result['passed'] else 1
     if args.fixed_address_test:
         from .fixed_address_diagnostics import fixed_address_test
-        config=(Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[2])/'internet.json'
+        from .package_support import internet_config_path
+        config=internet_config_path(__file__)
         cloud=json.loads(config.read_text(encoding='utf-8'))
         result=fixed_address_test(cloud['public_key'],cloud.get('ice_servers'))
         if args.result:Path(args.result).write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
         return 0 if result['passed'] else 1
     if args.numeric_test:
         from .diagnostics import numeric_test
-        config=(Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[2])/'internet.json'
+        from .package_support import internet_config_path
+        config=internet_config_path(__file__)
         result=numeric_test(json.loads(config.read_text(encoding='utf-8'))['public_key'])
         if args.result:Path(args.result).write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
         return 0 if result['passed'] else 1
     if args.internet_test or args.relay_test:
         from .diagnostics import internet_test
-        config=(Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[2])/'internet.json'
+        from .package_support import internet_config_path
+        config=internet_config_path(__file__)
         cloud=json.loads(config.read_text(encoding='utf-8'))
         result=internet_test(cloud['public_key'],cloud.get('ice_servers'),force_relay=args.relay_test)
         if args.result:Path(args.result).write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')

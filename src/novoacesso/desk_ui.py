@@ -430,6 +430,11 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         perm_card,perm_col=_settings_card('Dispositivos confiáveis e inicialização')
         self.unattended=QCheckBox('Habilitar acesso permanente por dispositivos autorizados');self.unattended.setChecked(settings.get('unattended',False));self.unattended.toggled.connect(self.unattended_changed);perm_col.addWidget(self.unattended)
         self.autostart=QCheckBox('Iniciar com o Windows, após meu login');self.autostart.setChecked(settings.get('autostart',False));self.autostart.toggled.connect(self.autostart_changed);perm_col.addWidget(self.autostart)
+        from .package_support import is_packaged,open_startup_settings
+        if is_packaged():
+            self.autostart.setChecked(False);self.autostart.setEnabled(False)
+            self.autostart.setToolTip('Na edição da Microsoft Store, o início com o Windows é gerenciado pelo próprio sistema.')
+            perm_col.addWidget(action_button('Gerenciar início com o Windows',open_startup_settings),0,Qt.AlignmentFlag.AlignLeft)
         perm_col.addWidget(hint('A tela de senha exige instalar o serviço e aprovar o acesso como administrador na máquina que será acessada. O modo pessoal fica vinculado a esta versão exata; uma atualização exige nova aprovação. Ele só atende sessões já autorizadas com mouse e teclado. O Desk precisa permanecer aberto após seu login no Windows; esta etapa não oferece conexão antes do primeiro login nem dispensa a senha do Windows.'))
         self.unattended_files=QCheckBox('Receber arquivos autorizados em Downloads sem pedir destino');self.unattended_files.setChecked(settings.get('unattended_files',False));self.unattended_files.toggled.connect(lambda enabled:self.identity.configure(unattended_files=enabled));perm_col.addWidget(self.unattended_files)
         perm_col.addWidget(hint('Faça uma sessão aprovada antes de autorizar um dispositivo. O Desk pede confirmação para ativar o acesso permanente.'))
@@ -502,6 +507,9 @@ class DeskShell(ConnectionFlow,SessionTools,CollaborationTools,ImageControls,Adv
         self.auto_install_on_exit.setChecked(settings.get('auto_install_on_exit',False))
         self.auto_install_on_exit.toggled.connect(lambda enabled:self.identity.configure(auto_install_on_exit=enabled))
         auto_col.addWidget(self.auto_install_on_exit)
+        if is_packaged():
+            self.auto_download_updates.setEnabled(False);self.auto_install_on_exit.setEnabled(False)
+            auto_col.addWidget(hint('Na edição da Microsoft Store, as atualizações automáticas são gerenciadas pela própria loja.'))
         auto_col.addWidget(hint('Os pacotes são autenticados por assinatura Ed25519 e conferência SHA-256 antes de executar. Sessões e gravações ativas nunca são interrompidas; seu número, favoritos e configurações são preservados.'))
         updates.addWidget(auto_card);updates.addStretch()
 
